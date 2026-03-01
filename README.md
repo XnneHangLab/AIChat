@@ -205,6 +205,18 @@
   - 若要构建 Console 版本（生成 exe 文件，用于调试），运行 `dotnet build -c Console`。
   - 若要构建 Release 版本，运行 `dotnet build -c Release`。
 - 构建产物位于 `AIChat/bin/<构建种类>/<.NET 版本>/AIChat.dll`
+
+#### 快速开发循环（Windows）
+
+改完代码后，一条命令完成构建并部署到游戏：
+
+```powershell
+dotnet build AIChat/AIChat.csproj -c Release && copy AIChat\bin\Release\net472\AIChat.dll "C:\Path\To\Game\BepInEx\plugins\"
+```
+
+将 `C:\Path\To\Game` 替换为实际游戏根目录（Steam 右键游戏 → 管理 → 浏览本地文件）。
+
+整个增量构建通常在 **5 秒内**完成；构建完成后重启游戏即可验证改动。
   > 提示：运行此命令可查看所有被 `.gitignore` 忽略的文件（在构建时所生成的文件一般都需要被忽略）：
   > ```bash
   > git ls-files --others --ignored --exclude-standard
