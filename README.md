@@ -205,6 +205,30 @@
   - 若要构建 Console 版本（生成 exe 文件，用于调试），运行 `dotnet build -c Console`。
   - 若要构建 Release 版本，运行 `dotnet build -c Release`。
 - 构建产物位于 `AIChat/bin/<构建种类>/<.NET 版本>/AIChat.dll`
+
+#### 快速开发循环（Windows）
+
+如果已安装 [`just`](https://github.com/casey/just)，可以使用預設的 `justfile`：
+
+```powershell
+# 首次需要下載依賴
+just setup
+
+# 構建並部署到遊戲
+just deploy
+```
+
+`just deploy` 會自動執行構建、刪除舊 DLL、複製新 DLL 到遊戲目錄。
+
+整個增量構建通常在 **5 秒內**完成；構建完成後重啟遊戲即可驗證改動。
+
+如果不想用 `just`，也可以手動執行：
+
+```powershell
+dotnet build AIChat/AIChat.csproj -c Release && copy AIChat\bin\Release\net472\AIChat.dll "C:\Path\To\Game\BepInEx\plugins\"
+```
+
+將 `C:\Path\To\Game` 替換為實際遊戲根目錄（Steam 右鍵遊戲 → 管理 → 瀏覽本地文件）。
   > 提示：运行此命令可查看所有被 `.gitignore` 忽略的文件（在构建时所生成的文件一般都需要被忽略）：
   > ```bash
   > git ls-files --others --ignored --exclude-standard
