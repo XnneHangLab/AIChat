@@ -145,6 +145,59 @@ namespace AIChat.Utils
         }
 
         /// <summary>
+        /// 从 OpenAI 兼容格式 JSON 中提取 content 字段（不使用正則）
+        /// 格式：{"choices": [{"message": {"content": "..."}}]}
+        /// </summary>
+        public static string ExtractContentFromOpenAIFormat(string json)
+        {
+            // 查找 "content": " 的位置
+            string contentKey = "\"content\"";
+            int contentKeyIndex = json.IndexOf(contentKey, StringComparison.Ordinal);
+            if (contentKeyIndex < 0) return json; // 找不到直接返回
+            
+            // 找到冒号
+            int colonIndex = json.IndexOf(':', contentKeyIndex);
+            if (colonIndex < 0) return json;
+            
+            // 跳过冒号和空白字符
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && (json[startIndex] == ' ' || json[startIndex] == '\t' || json[startIndex] == '\n' || json[startIndex] == '\r'))
+            {
+                startIndex++;
+            }
+            
+            // 检查是否是字符串（以 " 开头）
+            if (startIndex >= json.Length || json[startIndex] != '"') return json;
+            
+            // 跳过开头的 "
+            startIndex++;
+            
+            // 找到结束的 "（处理转义字符）
+            int endIndex = startIndex;
+            while (endIndex < json.Length)
+            {
+                if (json[endIndex] == '\\')
+                {
+                    endIndex += 2; // 跳过转义字符
+                    continue;
+                }
+                if (json[endIndex] == '"')
+                {
+                    break;
+                }
+                endIndex++;
+            }
+            
+            if (endIndex >= json.Length) return json;
+            
+            // 提取并处理转义
+            string content = json.Substring(startIndex, endIndex - startIndex);
+            content = content.Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\t", "\t").Replace("\\\"", "\"").Replace("\\\\", "\\");
+            
+            return content;
+        }
+
+        /// <summary>
         /// 获取深度思考参数的 JSON 字符串
         /// </summary>
         private static string GetThinkParameterJson(ThinkMode thinkMode)

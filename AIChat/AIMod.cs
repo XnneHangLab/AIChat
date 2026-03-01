@@ -936,10 +936,12 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse =>
                 {
-                    // XnneHangLab Chat Server 返回純文本，不需要特殊解析
+                    // XnneHangLab Chat Server 返回 OpenAI 兼容格式 JSON，需要解析
                     if (requestContext.UseXnneHangLab)
                     {
-                        fullResponse = rawResponse;
+                        // 解析 {"choices": [{"message": {"content": "..."}}]}
+                        // 不使用正則，用字符串操作提取 content
+                        fullResponse = LLMUtils.ExtractContentFromOpenAIFormat(rawResponse);
                     }
                     else if (requestContext.UseLocalOllama)
                     {
