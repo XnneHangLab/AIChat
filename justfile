@@ -6,7 +6,8 @@ build:
   dotnet build AIChat/AIChat.csproj -c Release
 
 # 构建并部署到游戏（覆盖安装）
-deploy: build
+deploy:
+  just build
   rm -f "{{game_plugins}}/AIChat.dll"
   cp "{{dll}}" "{{game_plugins}}/AIChat.dll"
 
