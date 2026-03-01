@@ -917,6 +917,7 @@ namespace ChillAIMod
                 SystemPrompt = _personaConfig.Value,
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
+                UseXnneHangLab = _useXnneHangLab.Value,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
@@ -935,9 +936,19 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse =>
                 {
-                    fullResponse = requestContext.UseLocalOllama
-                        ? ResponseParser.ExtractContentFromOllama(rawResponse)
-                        : ResponseParser.ExtractContentRegex(rawResponse);
+                    // XnneHangLab Chat Server 返回純文本，不需要特殊解析
+                    if (requestContext.UseXnneHangLab)
+                    {
+                        fullResponse = rawResponse;
+                    }
+                    else if (requestContext.UseLocalOllama)
+                    {
+                        fullResponse = ResponseParser.ExtractContentFromOllama(rawResponse);
+                    }
+                    else
+                    {
+                        fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
+                    }
                     success = true;
                 },
                 (errorMsg, responseCode) =>
@@ -1288,6 +1299,7 @@ namespace ChillAIMod
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
+                UseXnneHangLab = _useXnneHangLab.Value,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = null,
@@ -1299,9 +1311,20 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse => 
                 {
-                    string summary = requestContext.UseLocalOllama
-                        ? ResponseParser.ExtractContentFromOllama(rawResponse)
-                        : ResponseParser.ExtractContentRegex(rawResponse);
+                    // XnneHangLab Chat Server 返回純文本，不需要特殊解析
+                    string summary;
+                    if (requestContext.UseXnneHangLab)
+                    {
+                        summary = rawResponse;
+                    }
+                    else if (requestContext.UseLocalOllama)
+                    {
+                        summary = ResponseParser.ExtractContentFromOllama(rawResponse);
+                    }
+                    else
+                    {
+                        summary = ResponseParser.ExtractContentRegex(rawResponse);
+                    }
                     onComplete?.Invoke(summary);
                 },
                 (errorMsg, responseCode) => 
