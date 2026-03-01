@@ -110,10 +110,10 @@ namespace AIChat.Utils
 
             string jsonBody;
             
-            // XnneHangLab Chat Server：簡單的 OpenAI 兼容格式，不需要 stream 參數
+            // XnneHangLab Chat Server：簡單的 OpenAI 兼容格式，不需要 stream 參數，也不需要 model（由後端配置）
             if (requestContext.UseXnneHangLab)
             {
-                jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ] }}";
+                jsonBody = $@"{{ ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ] }}";
             }
             else
             {
