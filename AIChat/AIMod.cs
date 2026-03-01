@@ -24,6 +24,7 @@ namespace ChillAIMod
     {
         // ================= 【配置项】 =================
         private ConfigEntry<bool> _useOllama;
+        private ConfigEntry<bool> _useXnneHangLab;
         private ConfigEntry<ThinkMode> _thinkModeConfig;
         private ConfigEntry<string> _apiKeyConfig;
         private ConfigEntry<string> _modelConfig;
@@ -148,6 +149,7 @@ namespace ChillAIMod
             
             // --- LLM 配置 ---
             _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
+            _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab Chat Server");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -466,7 +468,28 @@ namespace ChillAIMod
                 if (_showLlmSettings)
                 {
                     GUILayout.Space(5);
-                    _useOllama.Value = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    
+                    // 【API 提供商选择】两个选项互斥
+                    bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    bool newUseXnneHangLab = GUILayout.Toggle(_useXnneHangLab.Value, "使用 XnneHangLab Chat Server", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    
+                    // 互斥逻辑：最多只能勾选一个
+                    if (newUseOllama && newUseXnneHangLab)
+                    {
+                        // 如果两个都被勾选，只保留最后点击的那个（这里通过判断哪个状态改变了来决定）
+                        if (_useOllama.Value == false)
+                        {
+                            newUseOllama = true;
+                            newUseXnneHangLab = false;
+                        }
+                        else
+                        {
+                            newUseOllama = false;
+                            newUseXnneHangLab = true;
+                        }
+                    }
+                    _useOllama.Value = newUseOllama;
+                    _useXnneHangLab.Value = newUseXnneHangLab;
                     
                     // 【深度思考模式选项】
                     GUILayout.Space(5);
@@ -480,13 +503,31 @@ namespace ChillAIMod
                     }
                     
                     GUILayout.Label("API URL：");
+                    
+                    // 如果勾选了 XnneHangLab，显示默认值提示
+                    if (_useXnneHangLab.Value && string.IsNullOrEmpty(_chatApiUrlConfig.Value))
+                    {
+                        _chatApiUrlConfig.Value = "http://127.0.0.1:8080/v1/chat/completions";
+                    }
+                    
                     _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    if (!_useOllama.Value) {
+                    
+                    if (_useXnneHangLab.Value)
+                    {
+                        GUILayout.Label("默认为 XnneHangLab Chat Server 本地部署时的地址，如果需要远程使用，直接替换为远程地址即可。(删空重置默认)", GUILayout.Height(elementHeight));
+                    }
+                    
+                    if (!_useOllama.Value && !_useXnneHangLab.Value) {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
-                    GUILayout.Label("模型名称：");
-                    _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    
+                    // 模型名称：使用 XnneHangLab 時不顯示（不需要模型名稱配置）
+                    if (!_useXnneHangLab.Value)
+                    {
+                        GUILayout.Label("模型名称：");
+                        _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    }
                     
                     GUILayout.Space(5);
                     _logApiRequestBodyConfig.Value = GUILayout.Toggle(_logApiRequestBodyConfig.Value, "在日志中记录 API 请求体", GUILayout.Height(elementHeight));
