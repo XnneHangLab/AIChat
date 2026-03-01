@@ -514,7 +514,7 @@ namespace ChillAIMod
                     
                     if (_useXnneHangLab.Value)
                     {
-                        GUILayout.Label("XnneHangLab Chat Server 默认地址：http://127.0.0.1:8080/v1/chat/completions", GUILayout.Height(elementHeight));
+                        GUILayout.Label("（已自動設置為 XnneHangLab Chat Server 地址）", GUILayout.Height(elementHeight));
                     }
                     
                     if (!_useOllama.Value && !_useXnneHangLab.Value) {
