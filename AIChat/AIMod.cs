@@ -521,8 +521,13 @@ namespace ChillAIMod
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
-                    GUILayout.Label("模型名称：");
-                    _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    
+                    // 模型名称：使用 XnneHangLab 時不顯示（不需要模型名稱配置）
+                    if (!_useXnneHangLab.Value)
+                    {
+                        GUILayout.Label("模型名称：");
+                        _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    }
                     
                     GUILayout.Space(5);
                     _logApiRequestBodyConfig.Value = GUILayout.Toggle(_logApiRequestBodyConfig.Value, "在日志中记录 API 请求体", GUILayout.Height(elementHeight));
