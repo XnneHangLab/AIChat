@@ -514,7 +514,9 @@ namespace ChillAIMod
                     
                     if (_useXnneHangLab.Value)
                     {
-                        GUILayout.Label("（使用 XnneHangLab 時自動設置，無法修改）", GUILayout.Height(elementHeight));
+
+                        GUILayout.Label("默认为 XnneHangLab Chat Server 本地部署时的地址，如果需要远程使用，直接替换为远程地址即可。(删空重置默认)", GUILayout.Height(elementHeight));
+
                     }
                     
                     if (!_useOllama.Value && !_useXnneHangLab.Value) {
