@@ -936,28 +936,12 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse =>
                 {
-                    // XnneHangLab Chat Server 返回 OpenAI 兼容格式 JSON，用 JsonUtility 解析
+                    // XnneHangLab Chat Server 返回 OpenAI 兼容格式 JSON
+                    // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
+                    // TODO: 以後改用 JsonUtility 直接解析
                     if (requestContext.UseXnneHangLab)
                     {
-                        try
-                        {
-                            var response = UnityEngine.JsonUtility.FromJson<OpenAIResponse>(rawResponse);
-                            if (response != null && response.choices != null && response.choices.Length > 0 &&
-                                response.choices[0].message != null)
-                            {
-                                fullResponse = response.choices[0].message.content;
-                            }
-                            else
-                            {
-                                Log.Warning($"[XnneHangLab] JSON 解析成功但結構異常：{rawResponse}");
-                                fullResponse = "解析失敗";
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            Log.Error($"[XnneHangLab] JSON 解析失敗：{e.Message}\n原始響應：{rawResponse}");
-                            fullResponse = "解析錯誤";
-                        }
+                        fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
                     }
                     else if (requestContext.UseLocalOllama)
                     {
