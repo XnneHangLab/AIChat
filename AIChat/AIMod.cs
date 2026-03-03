@@ -1079,9 +1079,8 @@ namespace ChillAIMod
                 // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
                 // 这是一个可选的保险措施
                 // 注意：启用翻译时，voiceText 是中文原文，TTS 会使用 DeepLX 翻译后的日文，跳过日语检测
-                bool isJapanese = (_japaneseCheckConfig.Value && !_enableTranslationConfig.Value)
-                    ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true ;
-                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value}, enableTranslation: {_enableTranslationConfig.Value})");
+                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true;
+                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
 
                 if (!string.IsNullOrEmpty(voiceText) && isJapanese)
                 {
