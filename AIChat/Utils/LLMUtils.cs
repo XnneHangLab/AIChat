@@ -26,6 +26,11 @@ namespace AIChat.Utils
         public ThinkMode ThinkMode;
         public HierarchicalMemory HierarchicalMemory;
         public string LogHeader;
+        
+        // --- 翻译相关配置 ---
+        public bool EnableTranslation;
+        public string DeepLX_Url;
+        public string TranslateTargetLang;
 
         public LLMRequestContext(
             string apiUrl = "",
@@ -39,7 +44,10 @@ namespace AIChat.Utils
             ThinkMode thinkMode = ThinkMode.Default,
             HierarchicalMemory hierarchicalMemory = null,
             string logHeader = "LLMRequest",
-            bool fixApiPathForThinkMode = false
+            bool fixApiPathForThinkMode = false,
+            bool enableTranslation = false,
+            string deeplxUrl = "",
+            string translateTargetLang = "ZH"
         )
         {
             ApiUrl = apiUrl;
@@ -54,6 +62,9 @@ namespace AIChat.Utils
             HierarchicalMemory = hierarchicalMemory;
             LogHeader = logHeader;
             FixApiPathForThinkMode = fixApiPathForThinkMode;
+            EnableTranslation = enableTranslation;
+            DeepLX_Url = deeplxUrl;
+            TranslateTargetLang = translateTargetLang;
         }
     }
 
@@ -78,6 +89,35 @@ namespace AIChat.Utils
         public static LLMStandardResponse ParseStandardResponse(string response)
         {
             LLMStandardResponse ret = new LLMStandardResponse(false, "Think", "", response);
+            
+            // ================= 【尝试 JSON 格式解析】 =================
+            // 期望格式：{"emotion": "Happy", "voice_text": "こんにちは", "subtitle_text": "你好"}
+            if (response.Trim().StartsWith("{"))
+            {
+                try
+                {
+                    // 简单的 JSON 解析（不使用第三方库）
+                    string emotion = ExtractJsonValue(response, "emotion");
+                    string voiceText = ExtractJsonValue(response, "voice_text");
+                    string subtitleText = ExtractJsonValue(response, "subtitle_text");
+                    
+                    if (!string.IsNullOrEmpty(emotion) && !string.IsNullOrEmpty(voiceText))
+                    {
+                        ret.EmotionTag = emotion.Trim().Replace("[", "").Replace("]", "");
+                        ret.VoiceText = voiceText.Trim();
+                        ret.SubtitleText = !string.IsNullOrEmpty(subtitleText) ? subtitleText.Trim() : voiceText.Trim();
+                        ret.Success = true;
+                        Log.Info("[解析] JSON 格式解析成功");
+                        return ret;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"[解析] JSON 解析失败：{ex.Message}");
+                }
+            }
+            
+            // ================= 【回退到 ||| 格式解析】 =================
             // 按 ||| 分割（注意：有些模型可能会用单个 | ）
             string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
 
@@ -102,6 +142,48 @@ namespace AIChat.Utils
 
             return ret;
         }
+        
+        /// <summary>
+        /// 简单的 JSON 值提取（不使用第三方库）
+        /// </summary>
+        private static string ExtractJsonValue(string json, string key)
+        {
+            string searchKey = $"\"{key}\"";
+            int keyIndex = json.IndexOf(searchKey);
+            if (keyIndex == -1) return null;
+            
+            int colonIndex = json.IndexOf(':', keyIndex);
+            if (colonIndex == -1) return null;
+            
+            // 跳过冒号后的空格
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && char.IsWhiteSpace(json[startIndex]))
+            {
+                startIndex++;
+            }
+            
+            if (startIndex >= json.Length) return null;
+            
+            // 检查是字符串还是其他类型
+            if (json[startIndex] == '"')
+            {
+                // 字符串值
+                startIndex++; // 跳过开头的引号
+                int endIndex = json.IndexOf('"', startIndex);
+                if (endIndex == -1) return null;
+                return json.Substring(startIndex, endIndex - startIndex);
+            }
+            else
+            {
+                // 非字符串值（数字、布尔值等）
+                int endIndex = startIndex;
+                while (endIndex < json.Length && json[endIndex] != ',' && json[endIndex] != '}' && json[endIndex] != ']')
+                {
+                    endIndex++;
+                }
+                return json.Substring(startIndex, endIndex - startIndex).Trim();
+            }
+        }
 
         public static string BuildRequestBody(LLMRequestContext requestContext)
         {
@@ -113,7 +195,14 @@ namespace AIChat.Utils
             // XnneHangLab Chat Server：簡單的 OpenAI 兼容格式，不需要 stream 參數，也不需要 model（由後端配置）
             if (requestContext.UseXnneHangLab)
             {
-                jsonBody = $@"{{ ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ] }}";
+                // 如果启用翻译，添加 extra_params
+                string extraParams = "";
+                if (requestContext.EnableTranslation)
+                {
+                    extraParams = $@", ""extra_params"": {{ ""translate_to"": ""{requestContext.TranslateTargetLang}"", ""return_format"": ""json"", ""emotion_detection"": true }}";
+                }
+                
+                jsonBody = $@"{{ ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraParams} }}";
             }
             else
             {
@@ -128,7 +217,7 @@ namespace AIChat.Utils
                     jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(finalPrompt)}"" }} ]{extraJson} }}";
                 } else {
                     // Gemini 或 Ollama (如果是 Llama3 等) 通常支持 system role
-                    jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}, {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraJson} }}";
+                    jsonBody = $@"{{ ""model"": ""{requestContext.ModelName}"", ""messages"": [ {{ ""role"": ""system"", ""content"": ""{ResponseParser.EscapeJson(requestContext.SystemPrompt)}"" }}", {{ ""role"": ""user"", ""content"": ""{ResponseParser.EscapeJson(userPromptWithMemory)}"" }} ]{extraJson} }}";
                 }
             }
 

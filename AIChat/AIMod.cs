@@ -68,11 +68,17 @@ namespace ChillAIMod
         // --- 新增：窗口标题显示配置 ---
         private ConfigEntry<bool> _showWindowTitle;
 
+        // --- 新增：翻译配置 ---
+        private ConfigEntry<bool> _enableTranslationConfig;
+        private ConfigEntry<string> _deeplxUrlConfig;
+        private ConfigEntry<string> _translateTargetLangConfig;
+
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
         private bool _showTtsSettings = false;
         private bool _showInterfaceSettings = false;
         private bool _showPersonaSettings = false;
+        private bool _showTranslationSettings = false;
 
         // --- 录音相关变量 ---
         private AudioClip _recordingClip;
@@ -195,6 +201,14 @@ namespace ChillAIMod
             _experimentalMemoryConfig = Config.Bind("4. Persona", "ExperimentalMemory", false, 
                 "启用记忆");
             _personaConfig = Config.Bind("4. Persona", "SystemPrompt", DefaultPersona, "System Prompt");
+
+            // --- 翻译配置 ---
+            _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false, 
+                "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
+            _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx", 
+                "DeepLX 翻译服务 URL");
+            _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "ZH", 
+                "翻译目标语言（如 ZH=中文，EN=英文，JA=日文）");
 
             // ===========================================
 
@@ -737,6 +751,50 @@ namespace ChillAIMod
 
                 GUILayout.Space(10);
                 
+                // ================= 翻译配置区域 =================
+                GUILayout.BeginVertical("box");
+                string translationBtnText = _showTranslationSettings ? "🔽 翻译配置" : "▶️ 翻译配置";
+                if (GUILayout.Button(translationBtnText, GUILayout.Height(elementHeight)))
+                {
+                    _showTranslationSettings = !_showTranslationSettings;
+                }
+                
+                if (_showTranslationSettings)
+                {
+                    GUILayout.Space(5);
+                    
+                    // 启用翻译开关
+                    _enableTranslationConfig.Value = GUILayout.Toggle(_enableTranslationConfig.Value, 
+                        "启用翻译", GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                    
+                    // 提示 Label
+                    GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+                    labelStyle.wordWrap = true;
+                    GUI.color = new Color(1f, 0.8f, 0.2f); // 橙黄色提示
+                    GUILayout.Label("⚠️ 开启翻译后请删掉系统提示词，无需利用提示词回复双语", labelStyle, GUILayout.Height(elementHeight * 2));
+                    GUI.color = Color.white;
+                    
+                    GUILayout.Space(5);
+                    
+                    // DeepLX URL
+                    GUILayout.Label("DeepLX 服务 URL:");
+                    _deeplxUrlConfig.Value = GUILayout.TextField(_deeplxUrlConfig.Value, GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                    
+                    // 目标语言
+                    GUILayout.Label("翻译目标语言:");
+                    _translateTargetLangConfig.Value = GUILayout.TextField(_translateTargetLangConfig.Value, GUILayout.Height(elementHeight));
+                    GUILayout.Label("示例：ZH=中文，EN=英文，JA=日文", GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                }
+                GUILayout.EndVertical();
+                
+                GUILayout.Space(10);
+                
                 // 保存按钮
                 if (GUILayout.Button("💾 保存所有配置", GUILayout.Height(elementHeight * 1.5f)))
                 {
@@ -926,7 +984,10 @@ namespace ChillAIMod
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
                 LogHeader = "AIChat",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                EnableTranslation = _enableTranslationConfig.Value,
+                DeepLX_Url = _deeplxUrlConfig.Value,
+                TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
             string fullResponse = "";
@@ -1310,7 +1371,10 @@ namespace ChillAIMod
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = null,
                 LogHeader = "HierarchicalMemory",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                EnableTranslation = false, // 记忆总结不需要翻译
+                DeepLX_Url = _deeplxUrlConfig.Value,
+                TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
             yield return LLMClient.SendLLMRequest(
