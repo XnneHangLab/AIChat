@@ -119,39 +119,47 @@ namespace AIChat.Core
             // Step 1：按换行粗切成段落
             string[] paragraphs = text.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-            // Step 2：每段再按标点细切
-            char[] punctuation = new char[] { '。', '？', '！', '!' };
-            var rawSentences = new List<string>();
+            // Step 1.5：段落级归并——以 —— 开头的段直接并到上一段（引语归属行）
+            var mergedParagraphs = new List<string>();
             foreach (var para in paragraphs)
             {
                 string trimmedPara = para.Trim();
                 if (string.IsNullOrEmpty(trimmedPara)) continue;
 
-                string[] parts = trimmedPara.Split(punctuation, StringSplitOptions.RemoveEmptyEntries);
+                bool startsWithDash = trimmedPara.StartsWith("\u2014\u2014"); // ——
+                if (startsWithDash && mergedParagraphs.Count > 0)
+                    mergedParagraphs[mergedParagraphs.Count - 1] += trimmedPara;
+                else
+                    mergedParagraphs.Add(trimmedPara);
+            }
+
+            // Step 2+3：段落内细切 + 段落内短段归并，段落之间不归并
+            // 用 lookbehind 保留标点，"——xxx" 以引号开头的归并到上一句
+            var result = new List<string>();
+            foreach (var para in mergedParagraphs)
+            {
+                // 按句末标点切（lookbehind 保留标点）
+                string[] parts = Regex.Split(para, @"(?<=[。？！!])");
+                var paraResult = new List<string>();
                 foreach (var part in parts)
                 {
                     string s = part.Trim();
-                    if (!string.IsNullOrEmpty(s))
-                        rawSentences.Add(s);
-                }
-            }
+                    if (string.IsNullOrEmpty(s)) continue;
 
-            // Step 3：归并规则
-            // - 少于 MergeThreshold 字的短段（如 ——莎士比亚）归并到上一句
-            // - 上一句以引号闭合符结尾（」』"'），当前段是说话人标注，归并到上一句
-            var result = new List<string>();
-            foreach (var s in rawSentences)
-            {
-                bool prevEndsWithQuote = result.Count > 0 &&
-                    Regex.IsMatch(result[result.Count - 1], @"[\u300b\u300d\u2019\u201d]$");
-                bool shouldMerge = result.Count > 0 && (
-                    s.Length < MergeThreshold ||
-                    prevEndsWithQuote
-                );
-                if (shouldMerge)
-                    result[result.Count - 1] = result[result.Count - 1] + s;
-                else
-                    result.Add(s);
+                    bool startsAsQuoteSuffix = Regex.IsMatch(s, @"^[\u201d\u2019\u300b\u300d]");
+                    bool prevEndsWithQuote = paraResult.Count > 0 &&
+                        Regex.IsMatch(paraResult[paraResult.Count - 1], @"[\u201d\u2019\u300b\u300d]$");
+                    bool shouldMerge = paraResult.Count > 0 && (
+                        startsAsQuoteSuffix ||
+                        prevEndsWithQuote ||
+                        s.Length < MergeThreshold
+                    );
+                    if (shouldMerge)
+                        paraResult[paraResult.Count - 1] += s;
+                    else
+                        paraResult.Add(s);
+                }
+                result.AddRange(paraResult);
             }
 
             return result.ToArray();
