@@ -1,4 +1,4 @@
-﻿using AIChat.Core;
+using AIChat.Core;
 using BepInEx.Logging;
 using System;
 using System.Collections;
@@ -22,8 +22,8 @@ namespace AIChat.Services
             string promptText,
             string promptLang,
             ManualLogSource logger,
-            Action<AudioClip> onComplete, 
-            int maxRetries = 3, 
+            Action<AudioClip> onComplete,
+            int maxRetries = 3,
             float timeoutSeconds = 30f,
             bool audioPathCheck = false)
         {
@@ -39,15 +39,13 @@ namespace AIChat.Services
                 }
             }
 
-            string jsonBody = $@"{{ 
-                ""text"": ""{ResponseParser.EscapeJson(textToSpeak)}"", 
-                ""text_lang"": ""{targetLang}"", 
-                ""ref_audio_path"": ""{ResponseParser.EscapeJson(refPath)}"", 
-                ""prompt_text"": ""{ResponseParser.EscapeJson(promptText)}"", 
-                ""prompt_lang"": ""{promptLang}"" 
-            }}";
+            string jsonBody = "{ "
+                + "\"text\": \"" + ResponseParser.EscapeJson(textToSpeak) + "\", "
+                + "\"text_lang\": \"" + targetLang + "\", "
+                + "\"ref_audio_path\": \"" + ResponseParser.EscapeJson(refPath) + "\", "
+                + "\"prompt_text\": \"" + ResponseParser.EscapeJson(promptText) + "\", "
+                + "\"prompt_lang\": \"" + promptLang + "\" }";
 
-            // Log the complete TTS API request before starting generation
             logger.LogInfo($"[TTS] 完整请求信息:");
             logger.LogInfo($"[TTS]   URL: {url}");
             logger.LogInfo($"[TTS]   Request Body: {jsonBody}");
@@ -64,9 +62,7 @@ namespace AIChat.Services
                     request.timeout = (int)timeoutSeconds;
 
                     var requestStartTime = DateTime.UtcNow;
-
                     yield return request.SendWebRequest();
-
                     var requestDuration = (DateTime.UtcNow - requestStartTime).TotalSeconds;
 
                     if (request.result == UnityWebRequest.Result.Success)
@@ -76,61 +72,68 @@ namespace AIChat.Services
                         {
                             logger.LogInfo($"[TTS] 语音生成成功（第 {attempt} 次尝试）（耗时 {requestDuration:F2}s）");
                             onComplete?.Invoke(clip);
-                            yield break; // 成功则退出
+                            yield break;
                         }
                     }
 
                     logger.LogWarning($"[TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）: {request.error}");
                     if (attempt < maxRetries)
-                    {
-                        yield return new WaitForSeconds(2f); // 重试前等待
-                    }
+                        yield return new WaitForSeconds(2f);
                 }
             }
 
             logger.LogError("[TTS] 所有重试均失败，放弃生成语音");
             onComplete?.Invoke(null);
         }
-        public static IEnumerator CheckTTSHealthOnce(string baseUrl, ManualLogSource logger, Action<bool> onResult)
+
+        /// <summary>
+        /// 双向 TTS 心跳循环：未连接时 5s 轮询，已连接后 30s 轮询。
+        /// 直接内联检测逻辑，避免每次 StartCoroutine 分配额外对象。
+        /// </summary>
+        public static IEnumerator TTSHealthLoop(
+            Func<string> getBaseUrl,
+            ManualLogSource logger,
+            Action<bool> onStateChanged)
         {
-            string ttsUrl = baseUrl.TrimEnd('/') + "/tts";
-            string minimalJson = @"{""text"": ""test""}";
-            using (UnityWebRequest req = new UnityWebRequest(ttsUrl, "POST")) // 没有/ping能够检测服务是否启动，只能利用/tts发一个小包观测失败返回码
+            // 缓存 WaitForSeconds 对象，避免每次循环 new 分配
+            var waitShort = new WaitForSeconds(5f);  // 未连接时
+            var waitLong  = new WaitForSeconds(30f); // 已连接时
+
+            bool lastState = false;
+            // 探测包：POST 最小 JSON，不读 body（只看连接状态）
+            byte[] probeBody = Encoding.UTF8.GetBytes("{\"text\": \"test\"}");
+
+            while (true)
             {
-                byte[] bodyRaw = Encoding.UTF8.GetBytes(minimalJson);
-                req.uploadHandler = new UploadHandlerRaw(bodyRaw);
-                req.downloadHandler = new DownloadHandlerBuffer();
-                req.SetRequestHeader("Content-Type", "application/json");
-                req.timeout = 8;
-
-                yield return req.SendWebRequest();
-
+                string ttsUrl = getBaseUrl().TrimEnd('/') + "/tts";
                 bool isReady = false;
-                if (req.result == UnityWebRequest.Result.Success)
+
+                using (UnityWebRequest req = new UnityWebRequest(ttsUrl, "POST"))
                 {
-                    isReady = true;
-                }
-                else if (req.responseCode == 422 || req.responseCode == 400) // 在我的电脑上返回400 bad request.
-                {
-                    isReady = true;
-                }
-                else
-                {
-                    // 404, 500, ConnectionError, Timeout 等 → 服务未就绪
-                    isReady = false;
+                    req.uploadHandler = new UploadHandlerRaw(probeBody);
+                    // 不设 downloadHandler：不读 body，减少内存分配
+                    req.SetRequestHeader("Content-Type", "application/json");
+                    req.timeout = 5;
+
+                    yield return req.SendWebRequest();
+
+                    isReady = req.result == UnityWebRequest.Result.Success
+                           || req.responseCode == 422
+                           || req.responseCode == 400;
                 }
 
-                if (isReady)
+                // 只在状态变化时回调 + 打 Log，避免每次都刷日志
+                if (isReady != lastState)
                 {
-                    logger.LogDebug("[TTS Health] 检测到服务已启动 (返回 422/200 等)");
-                }
-                else
-                {
-                    string error = req.error ?? $"HTTP {req.responseCode}";
-                    logger.LogDebug($"[TTS Health] 服务未就绪: {error}");
+                    lastState = isReady;
+                    onStateChanged?.Invoke(isReady);
+                    if (isReady)
+                        logger.LogInfo("[TTS Health] 服务已连接 ✅");
+                    else
+                        logger.LogWarning("[TTS Health] 服务断开 ❌");
                 }
 
-                onResult?.Invoke(isReady);
+                yield return isReady ? waitLong : waitShort;
             }
         }
     }

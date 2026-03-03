@@ -95,11 +95,9 @@ namespace ChillAIMod
         private Process _launchedTTSProcess;
         private bool _isTTSServiceReady = false;
         private Coroutine _ttsHealthCheckCoroutine;
-        private const float TTSHealthCheckInterval = 5f; // 每5秒检查一次
 
         private bool _isDeepLXServiceReady = false;
         private Coroutine _deeplxHealthCheckCoroutine;
-        private const float DeepLXHealthCheckInterval = 5f; // 每5秒检查一次
 
         // --- 翻译配置 ---
         private ConfigEntry<bool> _enableTranslationConfig;
@@ -1132,51 +1130,52 @@ namespace ChillAIMod
 
         IEnumerator TTSHealthCheckLoop()
         {
-            while (!_isTTSServiceReady)
-            {
-                yield return StartCoroutine(TTSClient.CheckTTSHealthOnce(_sovitsUrlConfig.Value, Logger, (ready) =>
-                {
-                    _isTTSServiceReady = ready;
-                }));
-                yield return new WaitForSeconds(TTSHealthCheckInterval);
-            }
+            // 委托给 TTSClient 的双向心跳实现
+            yield return StartCoroutine(TTSClient.TTSHealthLoop(
+                () => _sovitsUrlConfig.Value,
+                Logger,
+                (ready) => { _isTTSServiceReady = ready; }
+            ));
         }
 
         IEnumerator DeepLXHealthCheckLoop()
         {
-            while (!_isDeepLXServiceReady)
-            {
-                yield return StartCoroutine(CheckDeepLXHealthOnce(_deeplxUrlConfig.Value, (ready) =>
-                {
-                    _isDeepLXServiceReady = ready;
-                }));
-                yield return new WaitForSeconds(DeepLXHealthCheckInterval);
-            }
-        }
+            // 缓存 WaitForSeconds，避免每次循环 new 分配
+            var waitShort = new WaitForSeconds(5f);  // 未连接时
+            var waitLong  = new WaitForSeconds(30f); // 已连接时
 
-        IEnumerator CheckDeepLXHealthOnce(string deeplxUrl, Action<bool> onResult)
-        {
-            // DeepLX 官方支持 GET /health → {"status":"ok"}
-            // 从 translate URL 提取 scheme+host+port 拼 /health
-            string healthUrl = deeplxUrl;
+            // 从 translate URL 提取 scheme+host+port 拼 /health，只算一次
+            string healthUrl = _deeplxUrlConfig.Value;
             Uri uri;
-            if (Uri.TryCreate(deeplxUrl, UriKind.Absolute, out uri))
-            {
+            if (Uri.TryCreate(_deeplxUrlConfig.Value, UriKind.Absolute, out uri))
                 healthUrl = uri.Scheme + "://" + uri.Host + ":" + uri.Port + "/health";
-            }
 
-            using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
+            bool lastState = false;
+
+            while (true)
             {
-                req.timeout = 5;
-                yield return req.SendWebRequest();
+                bool isReady = false;
 
-                bool isReady = req.result == UnityWebRequest.Result.Success;
-                if (isReady)
-                    Logger.LogDebug("[DeepLX Health] 服务已就绪");
-                else
-                    Logger.LogDebug("[DeepLX Health] 服务未就绪: " + (req.error ?? "HTTP " + req.responseCode));
+                // HEAD 请求：只看响应码，不读 body，最轻量
+                using (UnityWebRequest req = UnityWebRequest.Head(healthUrl))
+                {
+                    req.timeout = 5;
+                    yield return req.SendWebRequest();
+                    isReady = req.result == UnityWebRequest.Result.Success;
+                }
 
-                onResult?.Invoke(isReady);
+                // 只在状态变化时回调 + 打 Log
+                if (isReady != lastState)
+                {
+                    lastState = isReady;
+                    _isDeepLXServiceReady = isReady;
+                    if (isReady)
+                        Logger.LogInfo("[DeepLX Health] 服务已连接 ✅");
+                    else
+                        Logger.LogWarning("[DeepLX Health] 服务断开 ❌");
+                }
+
+                yield return isReady ? waitLong : waitShort;
             }
         }
 
