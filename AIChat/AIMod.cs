@@ -102,8 +102,8 @@ namespace ChillAIMod
         // --- 翻译配置 ---
         private ConfigEntry<bool> _enableTranslationConfig;
         private ConfigEntry<string> _deeplxUrlConfig;
-        private ConfigEntry<string> _translateSourceLangConfig;
-        private ConfigEntry<string> _translateTargetLangConfig;
+        private ConfigEntry<string> _translateSourceLangConfig = null;
+        private ConfigEntry<string> _translateTargetLangConfig = null;
         private bool _showTranslationSettings = false;
 
         // --- XnneHangLab Server base URL ---
