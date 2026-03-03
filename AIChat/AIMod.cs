@@ -1743,7 +1743,7 @@ namespace ChillAIMod
                 req.SetRequestHeader("Content-Type", "application/json");
                 yield return req.SendWebRequest();
 
-                if (req.isNetworkError || req.isHttpError)
+                if (req.result == UnityWebRequest.Result.ConnectionError || req.result == UnityWebRequest.Result.ProtocolError)
                     Log.Warning($"[中断] POST 失败（忽略）: {req.error}");
                 else
                     Log.Info($"[中断] POST 成功: {req.responseCode}");
