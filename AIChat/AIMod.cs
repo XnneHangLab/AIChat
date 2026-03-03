@@ -106,6 +106,14 @@ namespace ChillAIMod
         private ConfigEntry<string> _translateTargetLangConfig;
         private bool _showTranslationSettings = false;
 
+        // --- XnneHangLab Server base URL ---
+        private ConfigEntry<string> _xnneHangLabBaseUrlConfig;
+
+        // --- 中断标志 ---
+        private bool _isInterrupted = false;
+        // 当前 AIProcessRoutine 协程引用（用于中断时 StopCoroutine）
+        private Coroutine _aiProcessCoroutine;
+
 
 
         private AudioSource _audioSource;
@@ -211,11 +219,16 @@ namespace ChillAIMod
             _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
-                "DeepLX 翻译服务 URL");
+                "DeepLX 翻译服务 URL（未勾选 XnneHangLab 时手动填写；勾选后由 Server 地址自动拼接）");
             _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "ZH",
                 "翻译源语言（如 ZH=中文，JA=日文，EN=英文）");
             _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "JA",
                 "翻译目标语言（如 JA=日文，ZH=中文，EN=英文）");
+
+            // --- XnneHangLab Server base URL ---
+            _xnneHangLabBaseUrlConfig = Config.Bind("1. LLM", "XnneHangLab_Base_URL",
+                "http://127.0.0.1:12393",
+                "XnneHangLab Server 根地址（勾选 XnneHangLab 时生效，各端点由代码自动拼接）");
 
             // ===========================================
 
@@ -533,24 +546,25 @@ namespace ChillAIMod
                     {
                         _thinkModeConfig.Value = (ThinkMode)newMode;
                     }
-                    
-                    GUILayout.Label("API URL：");
-                    
-                    // 如果勾选了 XnneHangLab，显示默认值提示
-                    if (_useXnneHangLab.Value && string.IsNullOrEmpty(_chatApiUrlConfig.Value))
-                    {
-                        _chatApiUrlConfig.Value = "http://127.0.0.1:8080/v1/chat/completions";
-                    }
-                    
-                    _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    
+
                     if (_useXnneHangLab.Value)
                     {
-
-
-                        GUILayout.Label("默认为 XnneHangLab Chat Server 本地部署时的地址。", GUILayout.Height(elementHeight));
-                        GUILayout.Label("如果需要远程使用，直接替换为远程地址即可。(删空重置默认)", GUILayout.Height(elementHeight));
-
+                        // XnneHangLab 模式：显示 base URL 输入框 + 各端点说明
+                        GUILayout.Label("XnneHangLab Server 地址：");
+                        _xnneHangLabBaseUrlConfig.Value = GUILayout.TextField(_xnneHangLabBaseUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
+                        endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                        Color prevC = GUI.color;
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label($"  chat:      {{base}}/memory/v1/chat/completions", endpointStyle);
+                        GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
+                        GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
+                        GUI.color = prevC;
+                    }
+                    else
+                    {
+                        GUILayout.Label("API URL：");
+                        _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
                     
                     if (!_useOllama.Value && !_useXnneHangLab.Value) {
@@ -795,8 +809,21 @@ namespace ChillAIMod
 
                     GUILayout.Space(5);
 
-                    GUILayout.Label("DeepLX 服务 URL:");
-                    _deeplxUrlConfig.Value = GUILayout.TextField(_deeplxUrlConfig.Value, GUILayout.Height(elementHeight));
+                    if (_useXnneHangLab.Value)
+                    {
+                        // XnneHangLab 模式：DeepLX 由 Server 托管，不需要手动填 URL
+                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                        infoStyle.wordWrap = true;
+                        Color prevC2 = GUI.color;
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label("DeepLX 已由 XnneHangLab Server 托管，无需单独填写 URL。", infoStyle);
+                        GUI.color = prevC2;
+                    }
+                    else
+                    {
+                        GUILayout.Label("DeepLX 服务 URL:");
+                        _deeplxUrlConfig.Value = GUILayout.TextField(_deeplxUrlConfig.Value, GUILayout.Height(elementHeight));
+                    }
 
                     GUILayout.Space(5);
 
@@ -864,7 +891,8 @@ namespace ChillAIMod
             // 如果需要发送消息，在渲染 TextArea 之前拦截事件
             if (shouldSendMessage)
             {
-                StartCoroutine(AIProcessRoutine(_playerInput));
+                _isInterrupted = false;
+                _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                 _playerInput = "";
                 keyEvent.Use(); // 消费事件，防止 TextArea 处理
             }
@@ -882,14 +910,30 @@ namespace ChillAIMod
             float totalWidth = _windowRect.width - 50f;
             float singleBtnWidth = (totalWidth - 4f) / 2f;
 
-            // ================== 发送按钮 ==================
+            // ================== 发送 / 中断按钮 ==================
             // 使用 GUILayout.Width(singleBtnWidth) 强制固定宽度
-            if (GUILayout.Button(_isProcessing ? "思考中..." : "发送", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
+            if (_isProcessing)
             {
-                if (!string.IsNullOrEmpty(_playerInput) && !_isProcessing)
+                // 处理中：显示中断按钮
+                GUI.backgroundColor = new Color(0.85f, 0.2f, 0.2f); // 红色
+                if (GUILayout.Button("⛔ 中断", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
                 {
-                    StartCoroutine(AIProcessRoutine(_playerInput));
-                    _playerInput = "";
+                    _isInterrupted = true;
+                    // fire-and-forget：通知 memory server 中断
+                    StartCoroutine(PostInterruptSignal());
+                }
+                GUI.backgroundColor = Color.white;
+            }
+            else
+            {
+                if (GUILayout.Button("发送", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
+                {
+                    if (!string.IsNullOrEmpty(_playerInput))
+                    {
+                        _isInterrupted = false;
+                        _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
+                        _playerInput = "";
+                    }
                 }
             }
 
@@ -994,7 +1038,7 @@ namespace ChillAIMod
             // 2. 准备请求数据
             var requestContext = new LLMRequestContext
             {
-                ApiUrl = _chatApiUrlConfig.Value,
+                ApiUrl = GetChatUrl(),
                 ApiKey = _apiKeyConfig.Value,
                 ModelName = _modelConfig.Value,
                 SystemPrompt = _personaConfig.Value,
@@ -1007,7 +1051,7 @@ namespace ChillAIMod
                 LogHeader = "AIChat",
                 FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
                 EnableTranslation = _enableTranslationConfig.Value,
-                DeepLXUrl = _deeplxUrlConfig.Value,
+                DeepLXUrl = GetDeepLXUrl(),
                 TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
@@ -1061,6 +1105,7 @@ namespace ChillAIMod
 
                 // 手动执行清理工作，恢复游戏原本状态
                 UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+                _isInterrupted = false;
                 _isProcessing = false;
                 yield break;
             }
@@ -1103,7 +1148,7 @@ namespace ChillAIMod
                             _audioPathCheckConfig.Value,
                             myText,
                             _enableTranslationConfig.Value,
-                            _deeplxUrlConfig.Value,
+                            GetDeepLXUrl(),
                             _translateSourceLangConfig.Value,
                             _translateTargetLangConfig.Value
                         ));
@@ -1166,6 +1211,7 @@ namespace ChillAIMod
 
             // 5. 清理
             UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+            _isInterrupted = false;
             _isProcessing = false;
         }
 
@@ -1232,9 +1278,25 @@ namespace ChillAIMod
             int sentenceIndex = 0;
             foreach (var sentence in sentences)
             {
-                // 等待队列里有音频
+                // 中断检查
+                if (_isInterrupted)
+                {
+                    Log.Info("[流式 TTS] 收到中断信号，停止播放");
+                    audioQueue.Clear();
+                    subtitleQueue.Clear();
+                    break;
+                }
+
+                // 等待队列里有音频（等待期间也检查中断）
                 while (audioQueue.Count == 0)
                 {
+                    if (_isInterrupted)
+                    {
+                        Log.Info("[流式 TTS] 等待期间收到中断信号，停止播放");
+                        audioQueue.Clear();
+                        subtitleQueue.Clear();
+                        yield break;
+                    }
                     myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Length})";
                     yield return null;
                 }
@@ -1251,7 +1313,7 @@ namespace ChillAIMod
                     myText.text = subtitle;
                     myText.color = Color.white;
                     
-                    // 播放语音 + 动作
+                    // 播放语音 + 动作（PlayNativeAnimation 内部会等播放完，中断后不再进入下一句）
                     yield return StartCoroutine(PlayNativeAnimation(emotionTag, clip));
                 }
                 else
@@ -1265,7 +1327,7 @@ namespace ChillAIMod
                 sentenceIndex++;
             }
             
-            Log.Info("[流式 TTS] 播放完成");
+            Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
         }
 
         /// <summary>
@@ -1288,6 +1350,13 @@ namespace ChillAIMod
         {
             for (int i = 0; i < sentences.Length; i++)
             {
+                // 中断检查：停止生成剩余句子
+                if (_isInterrupted)
+                {
+                    Log.Info($"[TTS 生成] 收到中断信号，停止生成（已完成 {i}/{sentences.Length} 句）");
+                    yield break;
+                }
+
                 string originalText = sentences[i];  // 中文原文（字幕用）
                 string ttsText = originalText;       // TTS 用文本，默认用原文兜底
                 
@@ -1411,7 +1480,7 @@ namespace ChillAIMod
 
             // 在 translate URL 末尾直接拼 /health
             // 例：http://127.0.0.1:12393/translate/deeplx → http://127.0.0.1:12393/translate/deeplx/health
-            string healthUrl = _deeplxUrlConfig.Value.TrimEnd('/') + "/health";
+            string healthUrl = GetDeepLXUrl().TrimEnd('/') + "/health";
 
             bool lastState = false;
 
@@ -1634,7 +1703,53 @@ namespace ChillAIMod
                 }
             }
         }
-        
+
+        // ================= 【中断 & URL 辅助方法】 =================
+
+        /// <summary>
+        /// 获取 DeepLX URL：XnneHangLab 模式下从 base URL 拼接，否则用配置值
+        /// </summary>
+        private string GetDeepLXUrl()
+        {
+            if (_useXnneHangLab.Value)
+                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/translate/deeplx";
+            return _deeplxUrlConfig.Value;
+        }
+
+        /// <summary>
+        /// 获取 XnneHangLab Chat Completions URL
+        /// </summary>
+        private string GetChatUrl()
+        {
+            if (_useXnneHangLab.Value)
+                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/v1/chat/completions";
+            return _chatApiUrlConfig.Value;
+        }
+
+        /// <summary>
+        /// fire-and-forget：向 memory server 发送中断信号
+        /// </summary>
+        IEnumerator PostInterruptSignal()
+        {
+            if (!_useXnneHangLab.Value) yield break;
+
+            string url = _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/interrupt";
+            Log.Info($"[中断] 发送 POST {url}");
+
+            using (var req = new UnityWebRequest(url, "POST"))
+            {
+                req.uploadHandler = new UploadHandlerRaw(new byte[0]);
+                req.downloadHandler = new DownloadHandlerBuffer();
+                req.SetRequestHeader("Content-Type", "application/json");
+                yield return req.SendWebRequest();
+
+                if (req.isNetworkError || req.isHttpError)
+                    Log.Warning($"[中断] POST 失败（忽略）: {req.error}");
+                else
+                    Log.Info($"[中断] POST 成功: {req.responseCode}");
+            }
+        }
+
         // ================= 【分层记忆系统相关方法】 =================
 
         /// <summary>
@@ -1675,7 +1790,7 @@ namespace ChillAIMod
 
             var requestContext = new LLMRequestContext
             {
-                ApiUrl = _chatApiUrlConfig.Value,
+                ApiUrl = GetChatUrl(),
                 ApiKey = _apiKeyConfig.Value,
                 ModelName = _modelConfig.Value,
                 SystemPrompt = "你是一个专业的文本总结助手。",
@@ -1688,7 +1803,7 @@ namespace ChillAIMod
                 LogHeader = "HierarchicalMemory",
                 FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
                 EnableTranslation = false, // 记忆总结不需要翻译
-                DeepLXUrl = _deeplxUrlConfig.Value,
+                DeepLXUrl = GetDeepLXUrl(),
                 TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
