@@ -1242,7 +1242,8 @@ namespace ChillAIMod
         }
 
         /// <summary>
-        /// 后台 TTS 生成循环：持续生成句子并加入队列（失败自动重试）
+        /// 后台 TTS 生成循环：持续生成句子并加入队列
+        /// 依赖 TTSClient.DownloadVoiceWithRetry 内部重试机制（3 次）
         /// </summary>
         IEnumerator TTSGeneratorLoop(
             string[] sentences,
@@ -1257,40 +1258,26 @@ namespace ChillAIMod
             for (int i = 0; i < sentences.Length; i++)
             {
                 AudioClip clip = null;
-                int retryCount = 0;
-                const int maxRetries = 5;
+                yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
+                    ttsBaseUrl + "/tts",
+                    sentences[i],
+                    targetLang,
+                    refAudioPath,
+                    promptText,
+                    promptLang,
+                    Logger,
+                    (c) => clip = c,
+                    3,
+                    30f,
+                    audioPathCheck));
                 
-                // 失败重试逻辑（本地服务直接重试，不等待）
-                while (retryCount < maxRetries)
+                if (clip != null)
                 {
-                    yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                        ttsBaseUrl + "/tts",
-                        sentences[i],
-                        targetLang,
-                        refAudioPath,
-                        promptText,
-                        promptLang,
-                        Logger,
-                        (c) => clip = c,
-                        3,
-                        30f,
-                        audioPathCheck));
-                    
-                    if (clip != null)
-                    {
-                        Log.Info($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成成功（重试 {retryCount} 次）");
-                        break;
-                    }
-                    else
-                    {
-                        retryCount++;
-                        Log.Warning($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败，第 {retryCount}/{maxRetries} 次重试...");
-                    }
+                    Log.Info($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成成功");
                 }
-                
-                if (clip == null)
+                else
                 {
-                    Log.Error($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败，已重试 {maxRetries} 次，放弃");
+                    Log.Warning($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败（已内部重试 3 次）");
                 }
                 
                 audioQueue.Enqueue(clip);
