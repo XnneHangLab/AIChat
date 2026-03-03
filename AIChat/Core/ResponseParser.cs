@@ -111,26 +111,42 @@ namespace AIChat.Core
         public static string[] SplitByChinesePunctuation(string text)
         {
             if (string.IsNullOrEmpty(text))
-            {
                 return new string[0];
-            }
 
-            // 按中文句号、问号、感叹号分割，保留分隔符
-            char[] separators = new char[] { '。', '？', '！', '!' };
-            string[] parts = text.Split(separators, StringSplitOptions.RemoveEmptyEntries);
-            
-            // 过滤空句和纯空格句
-            var sentences = new List<string>();
-            foreach (var part in parts)
+            // ── 方案 B：先按 \n 分段，再按标点细切，短段归并 ──
+            const int MergeThreshold = 8; // 少于这个字数的段归并到上一句
+
+            // Step 1：按换行粗切成段落
+            string[] paragraphs = text.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            // Step 2：每段再按标点细切
+            char[] punctuation = new char[] { '。', '？', '！', '!' };
+            var rawSentences = new List<string>();
+            foreach (var para in paragraphs)
             {
-                string trimmed = part.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
+                string trimmedPara = para.Trim();
+                if (string.IsNullOrEmpty(trimmedPara)) continue;
+
+                string[] parts = trimmedPara.Split(punctuation, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var part in parts)
                 {
-                    sentences.Add(trimmed);
+                    string s = part.Trim();
+                    if (!string.IsNullOrEmpty(s))
+                        rawSentences.Add(s);
                 }
             }
-            
-            return sentences.ToArray();
+
+            // Step 3：短段归并——少于 MergeThreshold 字的句子合并到上一句
+            var result = new List<string>();
+            foreach (var s in rawSentences)
+            {
+                if (result.Count > 0 && s.Length < MergeThreshold)
+                    result[result.Count - 1] = result[result.Count - 1] + s;
+                else
+                    result.Add(s);
+            }
+
+            return result.ToArray();
         }
     }
 }
