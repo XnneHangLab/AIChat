@@ -105,6 +105,8 @@ namespace ChillAIMod
         private ConfigEntry<string> _translateTargetLangConfig;
         private bool _showTranslationSettings = false;
 
+
+
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
@@ -256,6 +258,8 @@ namespace ChillAIMod
             {
                 _ttsHealthCheckCoroutine = StartCoroutine(TTSHealthCheckLoop());
             }
+            
+
 
             // 启动后台 DeepLX 健康检测
             if (_deeplxHealthCheckCoroutine == null)
@@ -462,7 +466,7 @@ namespace ChillAIMod
 
             string ttsStatus = _isTTSServiceReady ? "🟢 TTS 服务已就绪" : "🔴 正在等待 TTS 服务启动...";
             GUILayout.Label(ttsStatus);
-
+            
             string translateStatus = _isDeepLXServiceReady ? "🟢 Translate 服务已连接" : "🔴 正在等待 Translate 服务启动...";
             GUILayout.Label(translateStatus);
 
@@ -1062,50 +1066,73 @@ namespace ChillAIMod
                 AddToMemorySystem("User", prompt);
                 AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
-                // 【应用换行】 在将字幕文本显示到 UI 之前，强制插入换行符
-                subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
-
                 // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
                 // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
                 // 这是一个可选的保险措施
-                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[\u3040-\u309F\u30A0-\u30FF]") : true ;
+                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true ;
                 Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
 
                 if (!string.IsNullOrEmpty(voiceText) && isJapanese)
                 {
                     myText.text = "message is sending through cyber space";
-                    AudioClip downloadedClip = null;
-                    // 【修改点 1: 移除 apiKey 参数，因为 TTS 是本地部署】
-                    yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                        _sovitsUrlConfig.Value + "/tts",
-                        voiceText,
-                        _targetLangConfig.Value,
-                        _refAudioPathConfig.Value,
-                        _promptTextConfig.Value,
-                        _promptLangConfig.Value,
-                        Logger,
-                        (clip) => downloadedClip = clip,
-                        3,
-                        30f,
-                        _audioPathCheckConfig.Value));
-
-                    if (downloadedClip != null)
+                    
+                    // 【关键判断】仅在 TTS 服务就绪时启用流式断句播放
+                    if (_isTTSServiceReady)
                     {
-                        if (!downloadedClip.LoadAudioData()) yield return null;
-                        yield return null;
-
-                        myText.text = subtitleText;
-                        myText.color = Color.white;
-
-                        // 正常播放
-                        yield return StartCoroutine(PlayNativeAnimation(emotionTag, downloadedClip));
+                        // 流式 TTS 模式：断句 + 异步生成 + 逐句播放
+                        Log.Info("[TTS] 服务就绪，启用流式断句播放");
+                        yield return StartCoroutine(PlayStreamingTTS(
+                            voiceText,
+                            subtitleText,
+                            emotionTag,
+                            _sovitsUrlConfig.Value,
+                            _targetLangConfig.Value,
+                            _refAudioPathConfig.Value,
+                            _promptTextConfig.Value,
+                            _promptLangConfig.Value,
+                            _audioPathCheckConfig.Value,
+                            myText
+                        ));
                     }
                     else
                     {
-                        myText.text = "Voice Failed (TTS Error)";
-                        // 语音失败时，至少做个动作显示字幕
-                        myText.text = subtitleText;
-                        yield return StartCoroutine(PlayNativeAnimation(emotionTag, null)); // 传 null 进去
+                        // 传统模式：TTS 未就绪，完整文本一次性生成
+                        Log.Info("[TTS] 服务未就绪，使用传统完整文本模式");
+                        AudioClip downloadedClip = null;
+                        yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
+                            _sovitsUrlConfig.Value + "/tts",
+                            voiceText,
+                            _targetLangConfig.Value,
+                            _refAudioPathConfig.Value,
+                            _promptTextConfig.Value,
+                            _promptLangConfig.Value,
+                            Logger,
+                            (clip) => downloadedClip = clip,
+                            3,
+                            30f,
+                            _audioPathCheckConfig.Value));
+
+                        if (downloadedClip != null)
+                        {
+                            if (!downloadedClip.LoadAudioData()) yield return null;
+                            yield return null;
+
+                            // 【应用换行】在将字幕文本显示到 UI 之前，强制插入换行符
+                            subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
+                            myText.text = subtitleText;
+                            myText.color = Color.white;
+
+                            // 正常播放
+                            yield return StartCoroutine(PlayNativeAnimation(emotionTag, downloadedClip));
+                        }
+                        else
+                        {
+                            myText.text = "Voice Failed (TTS Error)";
+                            // 语音失败时，至少做个动作显示字幕
+                            subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
+                            myText.text = subtitleText;
+                            yield return StartCoroutine(PlayNativeAnimation(emotionTag, null)); // 传 null 进去
+                        }
                     }
                 }
                 else
@@ -1126,6 +1153,136 @@ namespace ChillAIMod
             // 5. 清理
             UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
             _isProcessing = false;
+        }
+
+
+        /// <summary>
+        /// 流式 TTS 播放：断句 + 异步生成队列 + 逐句同步播放
+        /// 仅在 TTS 服务就绪时调用
+        /// </summary>
+        IEnumerator PlayStreamingTTS(
+            string fullVoiceText,
+            string fullSubtitleText,
+            string emotionTag,
+            string ttsBaseUrl,
+            string targetLang,
+            string refAudioPath,
+            string promptText,
+            string promptLang,
+            bool audioPathCheck,
+            UnityEngine.UI.Text myText)
+        {
+            // 1. 按中文标点断句
+            string[] sentences = ResponseParser.SplitByChinesePunctuation(fullVoiceText);
+            
+            // 如果没有有效句子，回退到完整文本
+            if (sentences.Length == 0)
+            {
+                Log.Warning("[流式 TTS] 断句失败，回退到完整文本模式");
+                sentences = new string[] { fullVoiceText };
+            }
+            
+            Log.Info($"[流式 TTS] 断句完成，共 {sentences.Length} 句");
+            
+            // 2. 队列管理
+            Queue<AudioClip> audioQueue = new Queue<AudioClip>();
+            
+            // 字幕不分割，直接用完整字幕（避免字幕跳变）
+            string displaySubtitle = ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
+            
+            // 3. 启动后台 TTS 生成协程
+            StartCoroutine(TTSGeneratorLoop(
+                sentences,
+                ttsBaseUrl,
+                targetLang,
+                refAudioPath,
+                promptText,
+                promptLang,
+                audioPathCheck,
+                audioQueue
+            ));
+            
+            // 4. 播放循环
+            int sentenceIndex = 0;
+            foreach (var sentence in sentences)
+            {
+                // 等待队列里有音频
+                while (audioQueue.Count == 0)
+                {
+                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Length})";
+                    yield return null;
+                }
+                
+                AudioClip clip = audioQueue.Dequeue();
+                
+                if (clip != null)
+                {
+                    if (!clip.LoadAudioData()) yield return null;
+                    yield return null;
+                    
+                    // 显示字幕
+                    myText.text = displaySubtitle;
+                    myText.color = Color.white;
+                    
+                    // 播放语音 + 动作
+                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, clip));
+                }
+                else
+                {
+                    Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
+                    myText.text = displaySubtitle;
+                    myText.color = Color.white;
+                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
+                }
+                
+                sentenceIndex++;
+            }
+            
+            Log.Info("[流式 TTS] 播放完成");
+        }
+
+        /// <summary>
+        /// 后台 TTS 生成循环：持续生成句子并加入队列
+        /// 依赖 TTSClient.DownloadVoiceWithRetry 内部重试机制（3 次）
+        /// </summary>
+        IEnumerator TTSGeneratorLoop(
+            string[] sentences,
+            string ttsBaseUrl,
+            string targetLang,
+            string refAudioPath,
+            string promptText,
+            string promptLang,
+            bool audioPathCheck,
+            Queue<AudioClip> audioQueue)
+        {
+            for (int i = 0; i < sentences.Length; i++)
+            {
+                AudioClip clip = null;
+                yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
+                    ttsBaseUrl + "/tts",
+                    sentences[i],
+                    targetLang,
+                    refAudioPath,
+                    promptText,
+                    promptLang,
+                    Logger,
+                    (c) => clip = c,
+                    3,
+                    30f,
+                    audioPathCheck));
+                
+                if (clip != null)
+                {
+                    Log.Info($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成成功");
+                }
+                else
+                {
+                    Log.Warning($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败（已内部重试 3 次）");
+                }
+                
+                audioQueue.Enqueue(clip);
+            }
+            Log.Info("[TTS 生成器] 所有句子生成完成");
         }
 
         IEnumerator TTSHealthCheckLoop()
@@ -1176,7 +1333,7 @@ namespace ChillAIMod
                 yield return isReady ? waitLong : waitShort;
             }
         }
-
+        
         IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
         {
             if (GameBridge._heroineService == null || GameBridge._changeAnimSmoothMethod == null) yield break;

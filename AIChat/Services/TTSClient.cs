@@ -78,7 +78,7 @@ namespace AIChat.Services
 
                     logger.LogWarning($"[TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）: {request.error}");
                     if (attempt < maxRetries)
-                        yield return new WaitForSeconds(2f);
+                        yield return new WaitForSeconds(1f);
                 }
             }
 
