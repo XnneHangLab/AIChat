@@ -1288,15 +1288,8 @@ namespace ChillAIMod
         {
             for (int i = 0; i < sentences.Length; i++)
             {
-                // 每句再做一次防御性剥离，过滤掉序号、[Emotion] ||| 等残留
-                string originalText = ResponseParser.StripEmotionPrefix(sentences[i]).Trim();
-                // 剥完后为空（如 "3. " 或 "[Think] ||| " 这类无效句）直接跳过
-                if (string.IsNullOrEmpty(originalText))
-                {
-                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句剥离后为空，跳过");
-                    continue;
-                }
-                string ttsText = originalText;            // TTS 用文本，默认用原文兜底
+                string originalText = sentences[i];  // 中文原文（字幕用）
+                string ttsText = originalText;       // TTS 用文本，默认用原文兜底
                 
                 // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS
                 if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))

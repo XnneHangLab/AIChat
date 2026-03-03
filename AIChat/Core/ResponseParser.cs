@@ -135,19 +135,14 @@ namespace AIChat.Core
         /// <summary>
         /// 剥离 [Emotion] ||| 前缀，返回纯文本内容
         /// 防止 [Emotion] 和 ||| 被送进 TTS/DeepLX 产生怪声
-        /// 同时剥离段落序号（1. 2. 3. ①②③ 等）
         /// </summary>
         public static string StripEmotionPrefix(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
-            // 剥离 [Emotion] ||| 前缀
             var match = Regex.Match(
                 text, @"^\[[^\]]+\]\s*(?:\|{1,3}\s*)?(.*)$",
                 RegexOptions.Singleline);
-            string result = match.Success ? match.Groups[1].Value.Trim() : text;
-            // 剥离段落序号（1. 2. 3. 或 ① ② 等）
-            result = Regex.Replace(result, @"^[\d０-９]+[\.、．]\s*|^[①-⑳]\s*", "").Trim();
-            return result;
+            return match.Success ? match.Groups[1].Value.Trim() : text;
         }
 
         public static string[] SplitByChinesePunctuation(string text)
