@@ -171,7 +171,7 @@ namespace ChillAIMod
             _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab Chat Server");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
-                "http://127.0.0.1:8080/memory/chat",
+                "https://openrouter.ai/api/v1/chat/completions",
                 "API URL");
             _apiKeyConfig = Config.Bind("1. LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "API Key");
             _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
