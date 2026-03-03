@@ -41,8 +41,46 @@ namespace AIChat.Core
         // 简易 JSON 提取辅助函数
         public static string ExtractJsonValue(string json, string key)
         {
-            var match = Regex.Match(json, $"\"{key}\"\\s*:\\s*\"(.*?)\"");
-            return match.Success ? Regex.Unescape(match.Groups[1].Value) : "";
+            // 手动查找，支持值内含引号（贪婪查找最后一个非转义引号为结束）
+            string searchKey = "\"" + key + "\"";
+            int keyIndex = json.IndexOf(searchKey);
+            if (keyIndex == -1) return "";
+
+            int colonIndex = json.IndexOf(':', keyIndex + searchKey.Length);
+            if (colonIndex == -1) return "";
+
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && char.IsWhiteSpace(json[startIndex]))
+                startIndex++;
+
+            if (startIndex >= json.Length || json[startIndex] != '"') return "";
+
+            startIndex++; // 跳过开头引号
+            var sb = new System.Text.StringBuilder();
+            for (int i = startIndex; i < json.Length; i++)
+            {
+                if (json[i] == '\\' && i + 1 < json.Length)
+                {
+                    // 处理转义字符
+                    char next = json[i + 1];
+                    if (next == '"') sb.Append('"');
+                    else if (next == '\\') sb.Append('\\');
+                    else if (next == 'n') sb.Append('\n');
+                    else if (next == 'r') sb.Append('\r');
+                    else if (next == 't') sb.Append('\t');
+                    else sb.Append(next);
+                    i++; // 跳过转义字符
+                }
+                else if (json[i] == '"')
+                {
+                    break; // 遇到非转义引号，结束
+                }
+                else
+                {
+                    sb.Append(json[i]);
+                }
+            }
+            return sb.ToString();
         }
         // =========================================================================================
         // 【新增辅助函数】确保对话文本（字幕）强制换行，以防过长溢出屏幕。
