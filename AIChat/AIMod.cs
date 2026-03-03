@@ -1351,9 +1351,9 @@ namespace ChillAIMod
             System.Action<string> onComplete)
         {
             string jsonBody = "{ "
-                + ""text": "" + ResponseParser.EscapeJson(text) + "", "
-                + ""source_lang": "" + sourceLang + "", "
-                + ""target_lang": "" + targetLang + "" }";
+                + "\"text\": \"" + ResponseParser.EscapeJson(text) + "\", "
+                + "\"source_lang\": \"" + sourceLang + "\", "
+                + "\"target_lang\": \"" + targetLang + "\" }";
             
             logger.LogInfo($"[DeepLX] 请求翻译：{text}");
             
