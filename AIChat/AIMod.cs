@@ -168,10 +168,10 @@ namespace ChillAIMod
             
             // --- LLM 配置 ---
             _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
-            _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab Chat Server");
+            _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab /memory/chat");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
-                "https://openrouter.ai/api/v1/chat/completions",
+                "http://127.0.0.1:12393/memory/chat",
                 "API URL");
             _apiKeyConfig = Config.Bind("1. LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "API Key");
             _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
@@ -516,7 +516,7 @@ namespace ChillAIMod
                     
                     // 【API 提供商选择】两个选项互斥
                     bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    bool newUseXnneHangLab = GUILayout.Toggle(_useXnneHangLab.Value, "使用 XnneHangLab Chat Server", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    bool newUseXnneHangLab = GUILayout.Toggle(_useXnneHangLab.Value, "使用 XnneHangLab /memory/chat", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     
                     // 互斥逻辑：最多只能勾选一个
                     if (newUseOllama && newUseXnneHangLab)
@@ -556,7 +556,7 @@ namespace ChillAIMod
                         endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
                         Color prevC = GUI.color;
                         GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label($"  chat:      {{base}}/memory/v1/chat/completions", endpointStyle);
+                        GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
                         GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
                         GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
                         GUI.color = prevC;
@@ -1066,7 +1066,7 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse =>
                 {
-                    // XnneHangLab Chat Server 返回 OpenAI 兼容格式 JSON
+                    // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
                     // TODO: 以後改用 JsonUtility 直接解析
                     if (requestContext.UseXnneHangLab)
@@ -1722,7 +1722,7 @@ namespace ChillAIMod
         private string GetChatUrl()
         {
             if (_useXnneHangLab.Value)
-                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/v1/chat/completions";
+                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/chat";
             return _chatApiUrlConfig.Value;
         }
 
@@ -1811,7 +1811,7 @@ namespace ChillAIMod
                 requestContext,
                 rawResponse => 
                 {
-                    // XnneHangLab Chat Server 返回純文本，不需要特殊解析
+                    // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     string summary;
                     if (requestContext.UseXnneHangLab)
                     {
