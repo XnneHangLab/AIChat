@@ -105,9 +105,7 @@ namespace ChillAIMod
         private ConfigEntry<string> _translateTargetLangConfig;
         private bool _showTranslationSettings = false;
 
-        // --- 新增：翻译服务健康检测 ---
-        private Coroutine _translationHealthCheckCoroutine;
-        private const float TranslationHealthCheckInterval = 5f; // 每 5 秒检查一次
+
 
         private AudioSource _audioSource;
        
@@ -261,10 +259,7 @@ namespace ChillAIMod
                 _ttsHealthCheckCoroutine = StartCoroutine(TTSHealthCheckLoop());
             }
             
-            // 启动后台翻译服务健康检测
-            if (_translationHealthCheckCoroutine == null)
-            {
-            }
+
 
             // 启动后台 DeepLX 健康检测
             if (_deeplxHealthCheckCoroutine == null)
