@@ -212,6 +212,8 @@ namespace ChillAIMod
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
                 "DeepLX 翻译服务 URL");
+            _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "JA",
+                "翻译源语言（如 JA=日文，EN=英文，ZH=中文）");
             _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "ZH",
                 "翻译目标语言（如 ZH=中文，EN=英文，JA=日文）");
 
