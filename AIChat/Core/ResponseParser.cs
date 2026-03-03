@@ -143,7 +143,7 @@ namespace AIChat.Core
             foreach (var s in rawSentences)
             {
                 bool prevEndsWithQuote = result.Count > 0 &&
-                    Regex.IsMatch(result[result.Count - 1], @"[」』"']$");
+                    Regex.IsMatch(result[result.Count - 1], @"[\u300b\u300d\u2019\u201d]$");
                 bool shouldMerge = result.Count > 0 && (
                     s.Length < MergeThreshold ||
                     prevEndsWithQuote
