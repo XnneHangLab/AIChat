@@ -114,7 +114,7 @@ namespace AIChat.Core
                 return new string[0];
 
             // ── 方案 B：先按 \n 分段，再按标点细切，短段归并 ──
-            const int MergeThreshold = 8; // 少于这个字数的段归并到上一句
+            const int MergeThreshold = 12; // 少于这个字数的段归并到上一句
 
             // Step 1：按换行粗切成段落
             string[] paragraphs = text.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -136,11 +136,17 @@ namespace AIChat.Core
                 }
             }
 
-            // Step 3：短段归并——少于 MergeThreshold 字的句子合并到上一句
+            // Step 3：归并规则
+            // - 少于 MergeThreshold 字的短段（如 ——莎士比亚）归并到上一句
+            // - 以「」说/道/问/答等说话人标注开头的段（如 "我说"）归并到上一句
             var result = new List<string>();
             foreach (var s in rawSentences)
             {
-                if (result.Count > 0 && s.Length < MergeThreshold)
+                bool shouldMerge = result.Count > 0 && (
+                    s.Length < MergeThreshold ||
+                    Regex.IsMatch(s, @"^[""'「『]?[\u4e00-\u9fa5]{1,6}[说道问答喊叫笑哭叹whispered]\b?")
+                );
+                if (shouldMerge)
                     result[result.Count - 1] = result[result.Count - 1] + s;
                 else
                     result.Add(s);
