@@ -138,13 +138,15 @@ namespace AIChat.Core
 
             // Step 3：归并规则
             // - 少于 MergeThreshold 字的短段（如 ——莎士比亚）归并到上一句
-            // - 以「」说/道/问/答等说话人标注开头的段（如 "我说"）归并到上一句
+            // - 上一句以引号闭合符结尾（」』"'），当前段是说话人标注，归并到上一句
             var result = new List<string>();
             foreach (var s in rawSentences)
             {
+                bool prevEndsWithQuote = result.Count > 0 &&
+                    Regex.IsMatch(result[result.Count - 1], @"[」』"']$");
                 bool shouldMerge = result.Count > 0 && (
                     s.Length < MergeThreshold ||
-                    Regex.IsMatch(s, @"^[""'「『]?[\u4e00-\u9fa5]{1,6}[说道问答喊叫笑哭叹whispered]\b?")
+                    prevEndsWithQuote
                 );
                 if (shouldMerge)
                     result[result.Count - 1] = result[result.Count - 1] + s;
