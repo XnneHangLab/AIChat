@@ -144,9 +144,17 @@ namespace AIChat.Utils
             else
             {
                 // 格式异常：1段或>3段，打印完整内容便于调试
+                // 尽力提取：如果含 [xxx] 前缀就剥掉，剩余部分当字幕/TTS
                 Log.Warning($"[解析] 格式异常（{parts.Length} 段），完整内容：{response}");
-                ret.SubtitleText = response;
-                ret.VoiceText = response;
+                string fallbackText = response;
+                var emotionMatch = System.Text.RegularExpressions.Regex.Match(response, @"^\[([^\]]+)\]\s*\|*\|*\|*\s*(.*)$", System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (emotionMatch.Success)
+                {
+                    ret.EmotionTag = emotionMatch.Groups[1].Value.Trim();
+                    fallbackText = emotionMatch.Groups[2].Value.Trim();
+                }
+                ret.SubtitleText = fallbackText;
+                ret.VoiceText = fallbackText;
             }
 
             if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式：{response}");

@@ -1191,6 +1191,10 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
+            // 0. 防御性剥离：去掉 [Emotion] ||| 前缀，确保送 TTS/DeepLX 的文本干净
+            fullSubtitleText = ResponseParser.StripEmotionPrefix(fullSubtitleText);
+            fullVoiceText = ResponseParser.StripEmotionPrefix(fullVoiceText);
+
             // 1. 按中文标点断句（字幕文本）
             string[] sentences = ResponseParser.SplitByChinesePunctuation(fullSubtitleText);
             
