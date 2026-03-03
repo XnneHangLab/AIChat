@@ -1154,8 +1154,8 @@ namespace ChillAIMod
             {
                 bool isReady = false;
 
-                // HEAD 请求：只看响应码，不读 body，最轻量
-                using (UnityWebRequest req = UnityWebRequest.Head(healthUrl))
+                // GET 请求探测 /health，不使用返回 body
+                using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
                 {
                     req.timeout = 5;
                     yield return req.SendWebRequest();
