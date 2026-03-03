@@ -106,7 +106,6 @@ namespace ChillAIMod
         private bool _showTranslationSettings = false;
 
         // --- 新增：翻译服务健康检测 ---
-        private bool _isTranslationServiceReady = false;
         private Coroutine _translationHealthCheckCoroutine;
         private const float TranslationHealthCheckInterval = 5f; // 每 5 秒检查一次
 
@@ -265,7 +264,6 @@ namespace ChillAIMod
             // 启动后台翻译服务健康检测
             if (_translationHealthCheckCoroutine == null)
             {
-                _translationHealthCheckCoroutine = StartCoroutine(TranslationHealthCheckLoop());
             }
 
             // 启动后台 DeepLX 健康检测
@@ -1097,7 +1095,8 @@ namespace ChillAIMod
                             _refAudioPathConfig.Value,
                             _promptTextConfig.Value,
                             _promptLangConfig.Value,
-                            _audioPathCheckConfig.Value
+                            _audioPathCheckConfig.Value,
+                            myText
                         ));
                     }
                     else
@@ -1175,7 +1174,8 @@ namespace ChillAIMod
             string refAudioPath,
             string promptText,
             string promptLang,
-            bool audioPathCheck)
+            bool audioPathCheck,
+            UnityEngine.UI.Text myText)
         {
             // 1. 按中文标点断句
             string[] sentences = ResponseParser.SplitByChinesePunctuation(fullVoiceText);
@@ -1346,18 +1346,6 @@ namespace ChillAIMod
             }
         }
         
-        IEnumerator TranslationHealthCheckLoop()
-        {
-            while (!_isTranslationServiceReady)
-            {
-                yield return StartCoroutine(TranslationClient.CheckTranslationHealthOnce(_deeplxUrlConfig.Value, Logger, (ready) =>
-                {
-                    _isTranslationServiceReady = ready;
-                }));
-                yield return new WaitForSeconds(TranslationHealthCheckInterval);
-            }
-        }
-
         IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
         {
             if (GameBridge._heroineService == null || GameBridge._changeAnimSmoothMethod == null) yield break;
