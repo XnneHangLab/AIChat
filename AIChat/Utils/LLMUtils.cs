@@ -116,28 +116,37 @@ namespace AIChat.Utils
                 }
             }
 
-            // ================= 【回退到 ||| 格式解析】 =================
+            // ================= 【||| 格式解析】 =================
+            // 字段顺序：[Emotion] ||| SubtitleText (||| VoiceText)
+            // 2段：[Emotion] ||| 字幕文本        → VoiceText = SubtitleText（配合翻译模式）
+            // 3段：[Emotion] ||| 字幕文本 ||| TTS文本  → 双语兼容模式
+            // 1段或>3段：格式异常，打印完整内容供调试
             string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
 
-            if (parts.Length < 3)
+            if (parts.Length == 2)
             {
-                parts = response.Split(new string[] { "|" }, StringSplitOptions.None);
-            }
-
-            if (parts.Length >= 3)
-            {
+                // 标准翻译模式：[Emotion] ||| 中文字幕
                 ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
-                ret.VoiceText = parts[1].Trim();
-                ret.SubtitleText = parts[2].Trim();
-                ret.Success = true;
-            }
-            else if (parts.Length == 2)
-            {
-                // 两段格式：[Emotion] ||| 中文（启用翻译时，字幕由 DeepLX 填充，这里先用原文兜底）
-                ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
-                ret.VoiceText = parts[1].Trim();
                 ret.SubtitleText = parts[1].Trim();
+                ret.VoiceText = parts[1].Trim(); // TTS 用原文，翻译由 DeepLX 负责
                 ret.Success = true;
+                Log.Info("[解析] 2段格式解析成功（翻译模式）");
+            }
+            else if (parts.Length == 3)
+            {
+                // 双语兼容模式：[Emotion] ||| 字幕文本 ||| TTS文本
+                ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
+                ret.SubtitleText = parts[1].Trim();
+                ret.VoiceText = parts[2].Trim();
+                ret.Success = true;
+                Log.Info("[解析] 3段格式解析成功（双语模式）");
+            }
+            else
+            {
+                // 格式异常：1段或>3段，打印完整内容便于调试
+                Log.Warning($"[解析] 格式异常（{parts.Length} 段），完整内容：{response}");
+                ret.SubtitleText = response;
+                ret.VoiceText = response;
             }
 
             if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式：{response}");

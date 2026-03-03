@@ -1174,6 +1174,7 @@ namespace ChillAIMod
         /// <summary>
         /// 流式 TTS 播放：断句 + DeepLX 翻译 + 异步生成队列 + 逐句同步播放
         /// 仅在 TTS 服务就绪时调用
+        /// 工作流：中文字幕分句 → 字幕直接入队显示 → DeepLX(ZH→JA) → 日文送 TTS
         /// </summary>
         IEnumerator PlayStreamingTTS(
             string fullVoiceText,
@@ -1191,8 +1192,8 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
-            // 1. 按日文标点断句（原文）
-            string[] sentences = ResponseParser.SplitByChinesePunctuation(fullVoiceText);
+            // 1. 按中文标点断句（字幕文本）
+            string[] sentences = ResponseParser.SplitByChinesePunctuation(fullSubtitleText);
             
             // 如果没有有效句子，回退到完整文本
             if (sentences.Length == 0)
