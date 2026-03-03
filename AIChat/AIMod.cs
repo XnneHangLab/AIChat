@@ -1186,24 +1186,9 @@ namespace ChillAIMod
             
             // 2. 队列管理
             Queue<AudioClip> audioQueue = new Queue<AudioClip>();
-            Queue<string> subtitleQueue = new Queue<string>();
             
-            // 为每句生成对应的字幕（简单平均分割，后续可优化）
-            string[] subtitleParts = fullSubtitleText.Split(new char[] { '。', '？', '！', '!' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var part in subtitleParts)
-            {
-                string trimmed = part.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                {
-                    subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(trimmed, 25));
-                }
-            }
-            
-            // 如果字幕分割后数量不匹配，用完整字幕兜底
-            while (subtitleQueue.Count < sentences.Length)
-            {
-                subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(fullSubtitleText, 25));
-            }
+            // 字幕不分割，直接用完整字幕（避免字幕跳变）
+            string displaySubtitle = ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
             
             // 3. 启动后台 TTS 生成协程
             StartCoroutine(TTSGeneratorLoop(
@@ -1229,7 +1214,6 @@ namespace ChillAIMod
                 }
                 
                 AudioClip clip = audioQueue.Dequeue();
-                string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
                 
                 if (clip != null)
                 {
@@ -1237,7 +1221,7 @@ namespace ChillAIMod
                     yield return null;
                     
                     // 显示字幕
-                    myText.text = subtitle;
+                    myText.text = displaySubtitle;
                     myText.color = Color.white;
                     
                     // 播放语音 + 动作
@@ -1246,7 +1230,7 @@ namespace ChillAIMod
                 else
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
-                    myText.text = subtitle;
+                    myText.text = displaySubtitle;
                     myText.color = Color.white;
                     yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
                 }
