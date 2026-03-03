@@ -102,6 +102,7 @@ namespace ChillAIMod
         // --- 翻译配置 ---
         private ConfigEntry<bool> _enableTranslationConfig;
         private ConfigEntry<string> _deeplxUrlConfig;
+        private ConfigEntry<string> _translateSourceLangConfig;
         private ConfigEntry<string> _translateTargetLangConfig;
         private bool _showTranslationSettings = false;
 
@@ -797,6 +798,12 @@ namespace ChillAIMod
 
                     GUILayout.Space(5);
 
+                    GUILayout.Label("翻译源语言:");
+                    _translateSourceLangConfig.Value = GUILayout.TextField(_translateSourceLangConfig.Value, GUILayout.Height(elementHeight));
+                    GUILayout.Label("示例：JA=日文，EN=英文，ZH=中文", GUILayout.Height(elementHeight));
+
+                    GUILayout.Space(5);
+
                     GUILayout.Label("翻译目标语言:");
                     _translateTargetLangConfig.Value = GUILayout.TextField(_translateTargetLangConfig.Value, GUILayout.Height(elementHeight));
                     GUILayout.Label("示例：ZH=中文，EN=英文，JA=日文", GUILayout.Height(elementHeight));
@@ -1091,7 +1098,11 @@ namespace ChillAIMod
                             _promptTextConfig.Value,
                             _promptLangConfig.Value,
                             _audioPathCheckConfig.Value,
-                            myText
+                            myText,
+                            _enableTranslationConfig.Value,
+                            _deeplxUrlConfig.Value,
+                            _translateSourceLangConfig.Value,
+                            _translateTargetLangConfig.Value
                         ));
                     }
                     else
@@ -1157,7 +1168,7 @@ namespace ChillAIMod
 
 
         /// <summary>
-        /// 流式 TTS 播放：断句 + 异步生成队列 + 逐句同步播放
+        /// 流式 TTS 播放：断句 + DeepLX 翻译 + 异步生成队列 + 逐句同步播放
         /// 仅在 TTS 服务就绪时调用
         /// </summary>
         IEnumerator PlayStreamingTTS(
@@ -1170,9 +1181,13 @@ namespace ChillAIMod
             string promptText,
             string promptLang,
             bool audioPathCheck,
-            UnityEngine.UI.Text myText)
+            UnityEngine.UI.Text myText,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang)
         {
-            // 1. 按中文标点断句
+            // 1. 按日文标点断句（原文）
             string[] sentences = ResponseParser.SplitByChinesePunctuation(fullVoiceText);
             
             // 如果没有有效句子，回退到完整文本
@@ -1186,12 +1201,10 @@ namespace ChillAIMod
             
             // 2. 队列管理
             Queue<AudioClip> audioQueue = new Queue<AudioClip>();
+            Queue<string> subtitleQueue = new Queue<string>();
             
-            // 字幕不分割，直接用完整字幕（避免字幕跳变）
-            string displaySubtitle = ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
-            
-            // 3. 启动后台 TTS 生成协程
-            StartCoroutine(TTSGeneratorLoop(
+            // 3. 启动后台 TTS+ 翻译生成协程
+            StartCoroutine(TTSWithTranslationGeneratorLoop(
                 sentences,
                 ttsBaseUrl,
                 targetLang,
@@ -1199,7 +1212,12 @@ namespace ChillAIMod
                 promptText,
                 promptLang,
                 audioPathCheck,
-                audioQueue
+                audioQueue,
+                subtitleQueue,
+                enableTranslation,
+                deeplxUrl,
+                sourceLang,
+                translateTargetLang
             ));
             
             // 4. 播放循环
@@ -1214,14 +1232,15 @@ namespace ChillAIMod
                 }
                 
                 AudioClip clip = audioQueue.Dequeue();
+                string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
                 
                 if (clip != null)
                 {
                     if (!clip.LoadAudioData()) yield return null;
                     yield return null;
                     
-                    // 显示字幕
-                    myText.text = displaySubtitle;
+                    // 显示字幕（逐句）
+                    myText.text = subtitle;
                     myText.color = Color.white;
                     
                     // 播放语音 + 动作
@@ -1230,7 +1249,7 @@ namespace ChillAIMod
                 else
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
-                    myText.text = displaySubtitle;
+                    myText.text = subtitle;
                     myText.color = Color.white;
                     yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
                 }
@@ -1242,10 +1261,9 @@ namespace ChillAIMod
         }
 
         /// <summary>
-        /// 后台 TTS 生成循环：持续生成句子并加入队列
-        /// 依赖 TTSClient.DownloadVoiceWithRetry 内部重试机制（3 次）
+        /// 后台 TTS+ 翻译生成循环：逐句生成 TTS + DeepLX 翻译
         /// </summary>
-        IEnumerator TTSGeneratorLoop(
+        IEnumerator TTSWithTranslationGeneratorLoop(
             string[] sentences,
             string ttsBaseUrl,
             string targetLang,
@@ -1253,14 +1271,50 @@ namespace ChillAIMod
             string promptText,
             string promptLang,
             bool audioPathCheck,
-            Queue<AudioClip> audioQueue)
+            Queue<AudioClip> audioQueue,
+            Queue<string> subtitleQueue,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang)
         {
             for (int i = 0; i < sentences.Length; i++)
             {
+                string japaneseText = sentences[i];
+                string chineseSubtitle = japaneseText; // 默认用原文
+                
+                // 如果启用翻译，先请求 DeepLX 翻译
+                if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))
+                {
+                    string translatedText = null;
+                    yield return StartCoroutine(DeepLXTranslate(
+                        deeplxUrl,
+                        japaneseText,
+                        sourceLang,
+                        translateTargetLang,
+                        Logger,
+                        (result) => translatedText = result
+                    ));
+                    
+                    if (!string.IsNullOrEmpty(translatedText))
+                    {
+                        chineseSubtitle = translatedText;
+                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译成功");
+                    }
+                    else
+                    {
+                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译失败，使用原文");
+                    }
+                }
+                
+                // 加入字幕队列（带换行处理）
+                subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(chineseSubtitle, 25));
+                
+                // 生成 TTS 语音
                 AudioClip clip = null;
                 yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
                     ttsBaseUrl + "/tts",
-                    sentences[i],
+                    japaneseText,
                     targetLang,
                     refAudioPath,
                     promptText,
@@ -1273,16 +1327,62 @@ namespace ChillAIMod
                 
                 if (clip != null)
                 {
-                    Log.Info($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成成功");
+                    Log.Info($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句生成成功");
                 }
                 else
                 {
-                    Log.Warning($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败（已内部重试 3 次）");
+                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句 TTS 生成失败");
                 }
                 
                 audioQueue.Enqueue(clip);
             }
-            Log.Info("[TTS 生成器] 所有句子生成完成");
+            Log.Info("[TTS+ 翻译] 所有句子生成完成");
+        }
+
+        /// <summary>
+        /// DeepLX 翻译请求协程
+        /// </summary>
+        IEnumerator DeepLXTranslate(
+            string deeplxUrl,
+            string text,
+            string sourceLang,
+            string targetLang,
+            BepInEx.Logging.ManualLogSource logger,
+            System.Action<string> onComplete)
+        {
+            string jsonBody = "{ "
+                + ""text": "" + ResponseParser.EscapeJson(text) + "", "
+                + ""source_lang": "" + sourceLang + "", "
+                + ""target_lang": "" + targetLang + "" }";
+            
+            logger.LogInfo($"[DeepLX] 请求翻译：{text}");
+            
+            using (UnityWebRequest request = UnityWebRequest.Post(deeplxUrl, "POST"))
+            {
+                byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonBody);
+                request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
+                request.timeout = 10;
+                
+                yield return request.SendWebRequest();
+                
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    // 解析 JSON 响应，提取 target_text
+                    string jsonResponse = request.downloadHandler.text;
+                    logger.LogInfo($"[DeepLX] 响应：{jsonResponse}");
+                    
+                    // 简单 JSON 解析：提取 target_text 字段
+                    string targetText = ResponseParser.ExtractJsonValue(jsonResponse, "target_text");
+                    onComplete?.Invoke(targetText);
+                }
+                else
+                {
+                    logger.LogWarning($"[DeepLX] 翻译失败：{request.error}");
+                    onComplete?.Invoke(null);
+                }
+            }
         }
 
         IEnumerator TTSHealthCheckLoop()
