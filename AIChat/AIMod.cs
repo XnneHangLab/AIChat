@@ -103,6 +103,10 @@ namespace ChillAIMod
         private Coroutine _ttsHealthCheckCoroutine;
         private const float TTSHealthCheckInterval = 5f; // 每5秒检查一次
 
+        private bool _isDeepLXServiceReady = false;
+        private Coroutine _deeplxHealthCheckCoroutine;
+        private const float DeepLXHealthCheckInterval = 5f; // 每5秒检查一次
+
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
@@ -253,6 +257,12 @@ namespace ChillAIMod
             if (_ttsHealthCheckCoroutine == null)
             {
                 _ttsHealthCheckCoroutine = StartCoroutine(TTSHealthCheckLoop());
+            }
+
+            // 启动后台 DeepLX 健康检测
+            if (_deeplxHealthCheckCoroutine == null)
+            {
+                _deeplxHealthCheckCoroutine = StartCoroutine(DeepLXHealthCheckLoop());
             }
 
             // 【初始化分层记忆系统】
@@ -454,6 +464,9 @@ namespace ChillAIMod
 
             string ttsStatus = _isTTSServiceReady ? "🟢 TTS 服务已就绪" : "🔴 正在等待 TTS 服务启动...";
             GUILayout.Label(ttsStatus);
+
+            string translateStatus = _isDeepLXServiceReady ? "🟢 Translate 服务已连接" : "🔴 正在等待 Translate 服务启动...";
+            GUILayout.Label(translateStatus);
 
             // 设置展开按钮 (全宽)
             string settingsBtnText = _showSettings ? "🔽 收起设置" : "▶️ 展开设置";
@@ -1132,6 +1145,53 @@ namespace ChillAIMod
             }
         }
 
+        IEnumerator DeepLXHealthCheckLoop()
+        {
+            while (!_isDeepLXServiceReady)
+            {
+                yield return StartCoroutine(CheckDeepLXHealthOnce(_deeplxUrlConfig.Value, (ready) =>
+                {
+                    _isDeepLXServiceReady = ready;
+                }));
+                yield return new WaitForSeconds(DeepLXHealthCheckInterval);
+            }
+        }
+
+        IEnumerator CheckDeepLXHealthOnce(string deeplxUrl, Action<bool> onResult)
+        {
+            // DeepLX /translate/deeplx 端点：POST {"text":"test","source_lang":"auto","target_lang":"ZH"}
+            // 服务就绪时返回 200；未就绪时 Connection refused → result = ConnectionError
+            string baseUrl = deeplxUrl.TrimEnd('/');
+            // 去掉路径，只取 scheme+host+port 做 /health 探测（如果 deeplxUrl 包含路径则截断）
+            Uri uri;
+            string healthUrl = baseUrl;
+            if (Uri.TryCreate(baseUrl, UriKind.Absolute, out uri))
+            {
+                // 优先用 /health；DeepLX 官方支持 GET /health → {"status":"ok"}
+                healthUrl = $"{uri.Scheme}://{uri.Host}:{uri.Port}/health";
+            }
+
+            using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
+            {
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+
+                bool isReady = false;
+                if (req.result == UnityWebRequest.Result.Success)
+                {
+                    isReady = true;
+                    Logger.LogDebug("[DeepLX Health] 服务已就绪");
+                }
+                else
+                {
+                    string error = req.error ?? $"HTTP {req.responseCode}";
+                    Logger.LogDebug($"[DeepLX Health] 服务未就绪: {error}");
+                }
+
+                onResult?.Invoke(isReady);
+            }
+        }
+
         IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
         {
             if (GameBridge._heroineService == null || GameBridge._changeAnimSmoothMethod == null) yield break;
@@ -1305,6 +1365,11 @@ namespace ChillAIMod
             {
                 StopCoroutine(_ttsHealthCheckCoroutine);
                 _ttsHealthCheckCoroutine = null;
+            }
+            if (_deeplxHealthCheckCoroutine != null)
+            {
+                StopCoroutine(_deeplxHealthCheckCoroutine);
+                _deeplxHealthCheckCoroutine = null;
             }
             if (_quitTTSServiceOnQuitConfig.Value && _launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
             {   
