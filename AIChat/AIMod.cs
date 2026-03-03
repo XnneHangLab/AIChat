@@ -97,6 +97,16 @@ namespace ChillAIMod
         private Coroutine _ttsHealthCheckCoroutine;
         private const float TTSHealthCheckInterval = 5f; // 每5秒检查一次
 
+        private bool _isDeepLXServiceReady = false;
+        private Coroutine _deeplxHealthCheckCoroutine;
+        private const float DeepLXHealthCheckInterval = 5f; // 每5秒检查一次
+
+        // --- 翻译配置 ---
+        private ConfigEntry<bool> _enableTranslationConfig;
+        private ConfigEntry<string> _deeplxUrlConfig;
+        private ConfigEntry<string> _translateTargetLangConfig;
+        private bool _showTranslationSettings = false;
+
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
@@ -196,6 +206,14 @@ namespace ChillAIMod
                 "启用记忆");
             _personaConfig = Config.Bind("4. Persona", "SystemPrompt", DefaultPersona, "System Prompt");
 
+            // --- 翻译配置 ---
+            _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
+                "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
+            _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:1188/translate",
+                "DeepLX 翻译服务 URL");
+            _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "ZH",
+                "翻译目标语言（如 ZH=中文，EN=英文，JA=日文）");
+
             // ===========================================
 
             // ================= 【修改点 2: 左上角对齐】 =================
@@ -239,6 +257,12 @@ namespace ChillAIMod
             if (_ttsHealthCheckCoroutine == null)
             {
                 _ttsHealthCheckCoroutine = StartCoroutine(TTSHealthCheckLoop());
+            }
+
+            // 启动后台 DeepLX 健康检测
+            if (_deeplxHealthCheckCoroutine == null)
+            {
+                _deeplxHealthCheckCoroutine = StartCoroutine(DeepLXHealthCheckLoop());
             }
 
             // 【初始化分层记忆系统】
@@ -440,6 +464,9 @@ namespace ChillAIMod
 
             string ttsStatus = _isTTSServiceReady ? "🟢 TTS 服务已就绪" : "🔴 正在等待 TTS 服务启动...";
             GUILayout.Label(ttsStatus);
+
+            string translateStatus = _isDeepLXServiceReady ? "🟢 Translate 服务已连接" : "🔴 正在等待 Translate 服务启动...";
+            GUILayout.Label(translateStatus);
 
             // 设置展开按钮 (全宽)
             string settingsBtnText = _showSettings ? "🔽 收起设置" : "▶️ 展开设置";
@@ -736,7 +763,48 @@ namespace ChillAIMod
                 GUILayout.EndVertical();
 
                 GUILayout.Space(10);
-                
+
+                // ================= 翻译配置区域 =================
+                GUILayout.BeginVertical("box");
+                string translationBtnText = _showTranslationSettings ? "🔽 翻译配置" : "▶️ 翻译配置";
+                if (GUILayout.Button(translationBtnText, GUILayout.Height(elementHeight)))
+                {
+                    _showTranslationSettings = !_showTranslationSettings;
+                }
+
+                if (_showTranslationSettings)
+                {
+                    GUILayout.Space(5);
+
+                    _enableTranslationConfig.Value = GUILayout.Toggle(
+                        _enableTranslationConfig.Value, "启用翻译", GUILayout.Height(elementHeight));
+
+                    GUILayout.Space(5);
+
+                    GUIStyle warnStyle = new GUIStyle(GUI.skin.label);
+                    warnStyle.wordWrap = true;
+                    Color prevColor = GUI.color;
+                    GUI.color = new Color(1f, 0.8f, 0.2f);
+                    GUILayout.Label("⚠️ 开启翻译后请删掉系统提示词，无需利用提示词回复双语", warnStyle, GUILayout.Height(elementHeight * 2));
+                    GUI.color = prevColor;
+
+                    GUILayout.Space(5);
+
+                    GUILayout.Label("DeepLX 服务 URL:");
+                    _deeplxUrlConfig.Value = GUILayout.TextField(_deeplxUrlConfig.Value, GUILayout.Height(elementHeight));
+
+                    GUILayout.Space(5);
+
+                    GUILayout.Label("翻译目标语言:");
+                    _translateTargetLangConfig.Value = GUILayout.TextField(_translateTargetLangConfig.Value, GUILayout.Height(elementHeight));
+                    GUILayout.Label("示例：ZH=中文，EN=英文，JA=日文", GUILayout.Height(elementHeight));
+
+                    GUILayout.Space(5);
+                }
+                GUILayout.EndVertical();
+
+                GUILayout.Space(10);
+
                 // 保存按钮
                 if (GUILayout.Button("💾 保存所有配置", GUILayout.Height(elementHeight * 1.5f)))
                 {
@@ -926,7 +994,10 @@ namespace ChillAIMod
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
                 LogHeader = "AIChat",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                EnableTranslation = _enableTranslationConfig.Value,
+                DeepLXUrl = _deeplxUrlConfig.Value,
+                TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
             string fullResponse = "";
@@ -1063,11 +1134,49 @@ namespace ChillAIMod
         {
             while (!_isTTSServiceReady)
             {
-                yield return StartCoroutine(TTSClient.CheckTTSHealthOnce(_sovitsUrlConfig.Value,Logger,(ready) =>
+                yield return StartCoroutine(TTSClient.CheckTTSHealthOnce(_sovitsUrlConfig.Value, Logger, (ready) =>
                 {
                     _isTTSServiceReady = ready;
                 }));
                 yield return new WaitForSeconds(TTSHealthCheckInterval);
+            }
+        }
+
+        IEnumerator DeepLXHealthCheckLoop()
+        {
+            while (!_isDeepLXServiceReady)
+            {
+                yield return StartCoroutine(CheckDeepLXHealthOnce(_deeplxUrlConfig.Value, (ready) =>
+                {
+                    _isDeepLXServiceReady = ready;
+                }));
+                yield return new WaitForSeconds(DeepLXHealthCheckInterval);
+            }
+        }
+
+        IEnumerator CheckDeepLXHealthOnce(string deeplxUrl, Action<bool> onResult)
+        {
+            // DeepLX 官方支持 GET /health → {"status":"ok"}
+            // 从 translate URL 提取 scheme+host+port 拼 /health
+            string healthUrl = deeplxUrl;
+            Uri uri;
+            if (Uri.TryCreate(deeplxUrl, UriKind.Absolute, out uri))
+            {
+                healthUrl = uri.Scheme + "://" + uri.Host + ":" + uri.Port + "/health";
+            }
+
+            using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
+            {
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+
+                bool isReady = req.result == UnityWebRequest.Result.Success;
+                if (isReady)
+                    Logger.LogDebug("[DeepLX Health] 服务已就绪");
+                else
+                    Logger.LogDebug("[DeepLX Health] 服务未就绪: " + (req.error ?? "HTTP " + req.responseCode));
+
+                onResult?.Invoke(isReady);
             }
         }
 
@@ -1245,6 +1354,11 @@ namespace ChillAIMod
                 StopCoroutine(_ttsHealthCheckCoroutine);
                 _ttsHealthCheckCoroutine = null;
             }
+            if (_deeplxHealthCheckCoroutine != null)
+            {
+                StopCoroutine(_deeplxHealthCheckCoroutine);
+                _deeplxHealthCheckCoroutine = null;
+            }
             if (_quitTTSServiceOnQuitConfig.Value && _launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
             {   
                 try
@@ -1310,7 +1424,10 @@ namespace ChillAIMod
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = null,
                 LogHeader = "HierarchicalMemory",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value
+                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                EnableTranslation = false, // 记忆总结不需要翻译
+                DeepLXUrl = _deeplxUrlConfig.Value,
+                TranslateTargetLang = _translateTargetLangConfig.Value
             };
 
             yield return LLMClient.SendLLMRequest(
