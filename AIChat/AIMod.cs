@@ -1070,15 +1070,15 @@ namespace ChillAIMod
             {
                 LLMStandardResponse parsedResponse = LLMUtils.ParseStandardResponse(fullResponse);
                 string emotionTag = parsedResponse.EmotionTag;
-                string voiceText = parsedResponse.VoiceText;
-                string subtitleText = parsedResponse.SubtitleText;
+                // 解析后立即剥离 [Emotion] ||| 前缀，防止解析异常时前缀混入 TTS/字幕
+                string voiceText = ResponseParser.StripEmotionPrefix(parsedResponse.VoiceText);
+                string subtitleText = ResponseParser.StripEmotionPrefix(parsedResponse.SubtitleText);
                 AddToMemorySystem("User", prompt);
                 AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
                 // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
                 // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
                 // 这是一个可选的保险措施
-                // 注意：启用翻译时，voiceText 是中文原文，TTS 会使用 DeepLX 翻译后的日文，跳过日语检测
                 bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true;
                 Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
 
@@ -1288,7 +1288,14 @@ namespace ChillAIMod
         {
             for (int i = 0; i < sentences.Length; i++)
             {
-                string originalText = sentences[i];       // 中文原文（字幕用）
+                // 每句再做一次防御性剥离，过滤掉序号、[Emotion] ||| 等残留
+                string originalText = ResponseParser.StripEmotionPrefix(sentences[i]).Trim();
+                // 剥完后为空（如 "3. " 或 "[Think] ||| " 这类无效句）直接跳过
+                if (string.IsNullOrEmpty(originalText))
+                {
+                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句剥离后为空，跳过");
+                    continue;
+                }
                 string ttsText = originalText;            // TTS 用文本，默认用原文兜底
                 
                 // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS

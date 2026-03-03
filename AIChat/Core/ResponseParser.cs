@@ -97,15 +97,19 @@ namespace AIChat.Core
         /// <summary>
         /// 剥离 [Emotion] ||| 前缀，返回纯文本内容
         /// 防止 [Emotion] 和 ||| 被送进 TTS/DeepLX 产生怪声
+        /// 同时剥离段落序号（1. 2. 3. ①②③ 等）
         /// </summary>
         public static string StripEmotionPrefix(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
-            // 匹配 [xxx] 后跟可选的 ||| 分隔符
-            var match = System.Text.RegularExpressions.Regex.Match(
+            // 剥离 [Emotion] ||| 前缀
+            var match = Regex.Match(
                 text, @"^\[[^\]]+\]\s*(?:\|{1,3}\s*)?(.*)$",
-                System.Text.RegularExpressions.RegexOptions.Singleline);
-            return match.Success ? match.Groups[1].Value.Trim() : text;
+                RegexOptions.Singleline);
+            string result = match.Success ? match.Groups[1].Value.Trim() : text;
+            // 剥离段落序号（1. 2. 3. 或 ① ② 等）
+            result = Regex.Replace(result, @"^[\d０-９]+[\.、．]\s*|^[①-⑳]\s*", "").Trim();
+            return result;
         }
 
         public static string[] SplitByChinesePunctuation(string text)
@@ -138,8 +142,12 @@ namespace AIChat.Core
             var result = new List<string>();
             foreach (var para in mergedParagraphs)
             {
+                // 剥掉段落开头的序号（如 1. 2. 3. ①②③）
+                string stripped = Regex.Replace(para, @"^[\d０-９]+[\.、．]\s*|^[①-⑳]\s*", "").Trim();
+                if (string.IsNullOrEmpty(stripped)) continue;
+
                 // 按句末标点切（lookbehind 保留标点）
-                string[] parts = Regex.Split(para, @"(?<=[。？！!])");
+                string[] parts = Regex.Split(stripped, @"(?<=[。？！!])");
                 var paraResult = new List<string>();
                 foreach (var part in parts)
                 {
