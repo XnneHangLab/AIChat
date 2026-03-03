@@ -131,6 +131,14 @@ namespace AIChat.Utils
                 ret.SubtitleText = parts[2].Trim();
                 ret.Success = true;
             }
+            else if (parts.Length == 2)
+            {
+                // 两段格式：[Emotion] ||| 中文（启用翻译时，字幕由 DeepLX 填充，这里先用原文兜底）
+                ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
+                ret.VoiceText = parts[1].Trim();
+                ret.SubtitleText = parts[1].Trim();
+                ret.Success = true;
+            }
 
             if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式：{response}");
 

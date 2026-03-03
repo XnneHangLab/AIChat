@@ -212,10 +212,10 @@ namespace ChillAIMod
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
                 "DeepLX 翻译服务 URL");
-            _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "JA",
-                "翻译源语言（如 JA=日文，EN=英文，ZH=中文）");
-            _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "ZH",
-                "翻译目标语言（如 ZH=中文，EN=英文，JA=日文）");
+            _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "ZH",
+                "翻译源语言（如 ZH=中文，JA=日文，EN=英文）");
+            _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "JA",
+                "翻译目标语言（如 JA=日文，ZH=中文，EN=英文）");
 
             // ===========================================
 
@@ -802,13 +802,13 @@ namespace ChillAIMod
 
                     GUILayout.Label("翻译源语言:");
                     _translateSourceLangConfig.Value = GUILayout.TextField(_translateSourceLangConfig.Value, GUILayout.Height(elementHeight));
-                    GUILayout.Label("示例：JA=日文，EN=英文，ZH=中文", GUILayout.Height(elementHeight));
+                    GUILayout.Label("示例：ZH=中文，JA=日文，EN=英文", GUILayout.Height(elementHeight));
 
                     GUILayout.Space(5);
 
                     GUILayout.Label("翻译目标语言:");
                     _translateTargetLangConfig.Value = GUILayout.TextField(_translateTargetLangConfig.Value, GUILayout.Height(elementHeight));
-                    GUILayout.Label("示例：ZH=中文，EN=英文，JA=日文", GUILayout.Height(elementHeight));
+                    GUILayout.Label("示例：JA=日文，ZH=中文，EN=英文", GUILayout.Height(elementHeight));
 
                     GUILayout.Space(5);
                 }
@@ -1078,8 +1078,10 @@ namespace ChillAIMod
                 // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
                 // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
                 // 这是一个可选的保险措施
-                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true ;
-                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
+                // 注意：启用翻译时，voiceText 是中文原文，TTS 会使用 DeepLX 翻译后的日文，跳过日语检测
+                bool isJapanese = (_japaneseCheckConfig.Value && !_enableTranslationConfig.Value)
+                    ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true ;
+                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value}, enableTranslation: {_enableTranslationConfig.Value})");
 
                 if (!string.IsNullOrEmpty(voiceText) && isJapanese)
                 {
@@ -1282,16 +1284,16 @@ namespace ChillAIMod
         {
             for (int i = 0; i < sentences.Length; i++)
             {
-                string japaneseText = sentences[i];
-                string chineseSubtitle = japaneseText; // 默认用原文
+                string originalText = sentences[i];       // 中文原文（字幕用）
+                string ttsText = originalText;            // TTS 用文本，默认用原文兜底
                 
-                // 如果启用翻译，先请求 DeepLX 翻译
+                // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS
                 if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))
                 {
                     string translatedText = null;
                     yield return StartCoroutine(DeepLXTranslate(
                         deeplxUrl,
-                        japaneseText,
+                        originalText,
                         sourceLang,
                         translateTargetLang,
                         Logger,
@@ -1300,23 +1302,23 @@ namespace ChillAIMod
                     
                     if (!string.IsNullOrEmpty(translatedText))
                     {
-                        chineseSubtitle = translatedText;
-                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译成功");
+                        ttsText = translatedText;  // 翻译成功：日文送 TTS
+                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译成功：{originalText} → {ttsText}");
                     }
                     else
                     {
-                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译失败，使用原文");
+                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译失败，TTS 使用中文原文兜底");
                     }
                 }
                 
-                // 加入字幕队列（带换行处理）
-                subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(chineseSubtitle, 25));
+                // 字幕显示中文原文（带换行处理）
+                subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(originalText, 25));
                 
-                // 生成 TTS 语音
+                // 生成 TTS 语音（使用翻译后的日文，或原文兜底）
                 AudioClip clip = null;
                 yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
                     ttsBaseUrl + "/tts",
-                    japaneseText,
+                    ttsText,
                     targetLang,
                     refAudioPath,
                     promptText,
@@ -1354,8 +1356,8 @@ namespace ChillAIMod
         {
             string jsonBody = "{ "
                 + "\"text\": \"" + ResponseParser.EscapeJson(text) + "\", "
-                + "\"source_lang\": \"" + sourceLang + "\", "
-                + "\"target_lang\": \"" + targetLang + "\" }";
+                + "\"source_language\": \"" + sourceLang + "\", "
+                + "\"target_language\": \"" + targetLang + "\" }";
             
             logger.LogInfo($"[DeepLX] 请求翻译：{text}");
             
