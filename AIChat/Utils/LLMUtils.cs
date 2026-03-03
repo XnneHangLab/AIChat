@@ -202,19 +202,37 @@ namespace AIChat.Utils
 
             string jsonBody;
 
-            // XnneHangLab Chat Server：简单的 OpenAI 兼容格式
+            // XnneHangLab Chat Server：/memory/chat 端点格式
             if (requestContext.UseXnneHangLab)
             {
-                string systemContent = ResponseParser.EscapeJson(requestContext.SystemPrompt);
-                string userContent = ResponseParser.EscapeJson(userPromptWithMemory);
-
-                string extraParams = "";
-                if (requestContext.EnableTranslation)
+                // 检查 URL 是否包含 /memory/chat
+                bool useChatEndpoint = requestContext.ApiUrl.Contains("/memory/chat");
+                
+                if (useChatEndpoint)
                 {
-                    extraParams = ", \"extra_params\": { \"translate_to\": \"" + requestContext.TranslateTargetLang + "\", \"return_format\": \"json\", \"emotion_detection\": true }";
+                    // /memory/chat 端点：system prompt 由 server 端生成，不需要客户端发送
+                    // 只需要发送 message 和可选的 session_id
+                    string sessionParam = ""; // 可以后续扩展支持 session_id
+                    string modelParam = !string.IsNullOrEmpty(requestContext.ModelName) 
+                        ? ", \"model\": \"" + requestContext.ModelName + "\"" 
+                        : "";
+                    
+                    jsonBody = "{ \"message\": \"" + ResponseParser.EscapeJson(userPromptWithMemory) + "\"" + sessionParam + modelParam + " }";
                 }
+                else
+                {
+                    // /v1/chat/completions 端点：OpenAI 兼容格式（旧版，保留向后兼容）
+                    string systemContent = ResponseParser.EscapeJson(requestContext.SystemPrompt);
+                    string userContent = ResponseParser.EscapeJson(userPromptWithMemory);
 
-                jsonBody = "{ \"messages\": [ { \"role\": \"system\", \"content\": \"" + systemContent + "\" }, { \"role\": \"user\", \"content\": \"" + userContent + "\" } ]" + extraParams + " }";
+                    string extraParams = "";
+                    if (requestContext.EnableTranslation)
+                    {
+                        extraParams = ", \"extra_params\": { \"translate_to\": \"" + requestContext.TranslateTargetLang + "\", \"return_format\": \"json\", \"emotion_detection\": true }";
+                    }
+
+                    jsonBody = "{ \"messages\": [ { \"role\": \"system\", \"content\": \"" + systemContent + "\" }, { \"role\": \"user\", \"content\": \"" + userContent + "\" } ]" + extraParams + " }";
+                }
             }
             else
             {
