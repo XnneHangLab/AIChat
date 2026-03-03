@@ -1260,7 +1260,7 @@ namespace ChillAIMod
                 int retryCount = 0;
                 const int maxRetries = 5;
                 
-                // 失败重试逻辑
+                // 失败重试逻辑（本地服务直接重试，不等待）
                 while (retryCount < maxRetries)
                 {
                     yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
@@ -1285,10 +1285,6 @@ namespace ChillAIMod
                     {
                         retryCount++;
                         Log.Warning($"[TTS 生成器] 第 {i + 1}/{sentences.Length} 句生成失败，第 {retryCount}/{maxRetries} 次重试...");
-                        if (retryCount < maxRetries)
-                        {
-                            yield return new WaitForSeconds(2f); // 重试前等待 2 秒
-                        }
                     }
                 }
                 
