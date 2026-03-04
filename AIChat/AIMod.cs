@@ -1169,15 +1169,30 @@ namespace ChillAIMod
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
+            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用，由后端管理所有模型和 API key
+            bool useChatServer = _useXnneHangLabChatServer.Value;
+            
+            // 如果启用了 Chat Server 且勾选了禁用人设，则不发送 SystemPrompt
+            string systemPromptToSend = "";
+            if (useChatServer && _disablePersonaWhenUsingChatServer.Value)
+            {
+                systemPromptToSend = ""; // Chat Server 自行管理 System Prompt
+            }
+            else
+            {
+                systemPromptToSend = _personaConfig.Value;
+            }
+            
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = _apiKeyConfig.Value,
-                ModelName = _modelConfig.Value,
-                SystemPrompt = _personaConfig.Value,
+                ApiKey = useChatServer ? "" : _apiKeyConfig.Value, // Chat Server 不需要 API Key
+                ModelName = useChatServer ? "" : _modelConfig.Value, // Chat Server 不需要 Model Name
+                SystemPrompt = systemPromptToSend,
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLabChatServer = useChatServer, // 新增字段
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
@@ -1202,7 +1217,7 @@ namespace ChillAIMod
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
                     // TODO: 以後改用 JsonUtility 直接解析
-                    if (requestContext.UseXnneHangLab)
+                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
                     {
                         fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
                     }
@@ -1932,15 +1947,19 @@ namespace ChillAIMod
         {
             Log.Info("[HierarchicalMemory] >>> 开始调用 LLM 进行总结...");
 
+            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用
+            bool useChatServer = _useXnneHangLabChatServer.Value;
+            
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = _apiKeyConfig.Value,
-                ModelName = _modelConfig.Value,
+                ApiKey = useChatServer ? "" : _apiKeyConfig.Value,
+                ModelName = useChatServer ? "" : _modelConfig.Value,
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLabChatServer = useChatServer,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = null,
@@ -1957,7 +1976,7 @@ namespace ChillAIMod
                 {
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     string summary;
-                    if (requestContext.UseXnneHangLab)
+                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
                     {
                         summary = rawResponse;
                     }
