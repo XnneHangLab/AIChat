@@ -76,7 +76,6 @@ namespace ChillAIMod
         // --- 新增：预测对话配置 ---
         private ConfigEntry<string> _predictPromptConfig;
         private ConfigEntry<bool> _enablePredictReply;
-        private ConfigEntry<string> _predictModelName;
 
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
@@ -264,9 +263,7 @@ namespace ChillAIMod
                 "预测对话 System Prompt");
             
             _enablePredictReply = Config.Bind("7. Predict", "Enable_Predict_Reply", false,
-                "启用自动预测回复（AI 回复后自动生成预选回复）");
-            _predictModelName = Config.Bind("7. Predict", "Predict_Model_Name", "openai/gpt-3.5-turbo",
-                "预测回复使用的模型名称（使用无状态 LLM，不受 Chat Server 影响）");
+                "启用自动预测回复（AI 回复后自动生成预选回复，复用 LLM 配置）");
 
             // ===========================================
 
@@ -918,21 +915,12 @@ namespace ChillAIMod
                     
                     if (_enablePredictReply.Value)
                     {
-                        // 模型名称
-                        GUILayout.Label("预测模型名称：");
-                        _predictModelName.Value = GUILayout.TextField(
-                            _predictModelName.Value,
-                            GUILayout.Height(elementHeight),
-                            GUILayout.MinWidth(50f));
-                        
-                        GUILayout.Space(5);
-                        
                         // 提示信息
                         GUIStyle infoStyle2 = new GUIStyle(GUI.skin.label);
                         infoStyle2.wordWrap = true;
                         Color prevC2 = GUI.color;
                         GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label("ℹ️ 预测功能使用独立的无状态 LLM 配置，不受 XnneHangLab Chat Server 影响", infoStyle2);
+                        GUILayout.Label("ℹ️ 预测功能复用 LLM 配置（API URL、API Key、Model Name）", infoStyle2);
                         GUILayout.Label("ℹ️ 触发时机：AI 完整回复后自动预测，TTS 播放完毕后显示预览", infoStyle2);
                         GUI.color = prevC2;
                     }
@@ -1849,6 +1837,7 @@ namespace ChillAIMod
             {
                 _pendingPredictResult = false;
                 _showPredictedReplies = true;
+                StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
                 Log.Info("[预测回复] TTS 播放完成，显示预测结果");
             }
         }
@@ -2024,6 +2013,38 @@ namespace ChillAIMod
         // ================= 【预测回复相关方法】 =================
 
         /// <summary>
+        /// 显示调试日志到字幕（不生成 TTS）
+        /// </summary>
+        IEnumerator ShowDebugLog(string message, float displaySeconds = 3f)
+        {
+            // 获取游戏 UI 上下文
+            GameObject canvas = GameObject.Find("Canvas");
+            if (canvas == null) yield break;
+            
+            Transform originalTextTrans = canvas.transform.Find("StorySystemUI/MessageWindow/NormalTextParent/NormalTextMessage");
+            if (originalTextTrans == null) yield break;
+            
+            GameObject originalTextObj = originalTextTrans.gameObject;
+            GameObject parentObj = originalTextObj.transform.parent.gameObject;
+            
+            // 创建临时字幕
+            GameObject debugTextObj = UIHelper.CreateOverlayText(parentObj);
+            Text debugText = debugTextObj.GetComponent<Text>();
+            
+            // 显示日志
+            debugText.text = message;
+            debugText.color = new Color(1f, 1f, 0.5f); // 淡黄色
+            
+            Log.Info($"[DebugLog] {message}");
+            
+            // 显示指定时间
+            yield return new WaitForSecondsRealtime(displaySeconds);
+            
+            // 清理
+            UnityEngine.Object.Destroy(debugTextObj);
+        }
+
+        /// <summary>
         /// 触发预测回复：异步调用 LLM 生成预选回复
         /// </summary>
         IEnumerator TriggerPredictReply(string aiLastResponse)
@@ -2032,16 +2053,16 @@ namespace ChillAIMod
             _showPredictedReplies = false;
             _pendingPredictResult = false;
 
+            // 显示调试日志到字幕
+            StartCoroutine(ShowDebugLog("[预测] 开始生成预测..."));
             Log.Info("[预测回复] 开始生成预测...");
 
-            // 构建预测请求
+            // 构建预测请求（复用 LLM 配置）
             var requestContext = new LLMRequestContext
             {
-                ApiUrl = _useXnneHangLabChatServer.Value 
-                    ? _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/v1/chat/completions" 
-                    : _chatApiUrlConfig.Value,
-                ApiKey = _useXnneHangLabChatServer.Value ? "" : _apiKeyConfig.Value,
-                ModelName = _predictModelName.Value,
+                ApiUrl = _chatApiUrlConfig.Value,
+                ApiKey = _apiKeyConfig.Value,
+                ModelName = _modelConfig.Value,
                 SystemPrompt = _predictPromptConfig.Value,
                 UserPrompt = "Based on this AI response, generate two user replies (JSON format):\nAI: " + aiLastResponse,
                 UseLocalOllama = _useOllama.Value,
@@ -2069,6 +2090,7 @@ namespace ChillAIMod
                 },
                 (errorMsg, responseCode) =>
                 {
+                    StartCoroutine(ShowDebugLog($"[预测] API 错误：{errorMsg}"));
                     Log.Warning($"[预测回复] API 错误：{errorMsg} (Code: {responseCode})");
                     success = false;
                 }
@@ -2086,11 +2108,13 @@ namespace ChillAIMod
                     if (_isAISpeaking)
                     {
                         _pendingPredictResult = true;
+                        StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angel.Length}字 / {devil.Length}字，等待 TTS 完成后显示"));
                         Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
                     }
                     else
                     {
                         _showPredictedReplies = true;
+                        StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angel.Length}字 / {devil.Length}字"));
                         Log.Info("[预测回复] 预测完成并显示");
                     }
                 }
