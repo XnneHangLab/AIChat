@@ -41,6 +41,7 @@ namespace AIChat.Utils
             string userPrompt = "",
             bool useLocalOllama = false,
             bool useXnneHangLab = false,
+            bool useXnneHangLabChatServer = false,
             bool logApiRequestBody = false,
             ThinkMode thinkMode = ThinkMode.Default,
             HierarchicalMemory hierarchicalMemory = null,
@@ -58,6 +59,7 @@ namespace AIChat.Utils
             UserPrompt = userPrompt;
             UseLocalOllama = useLocalOllama;
             UseXnneHangLab = useXnneHangLab;
+            UseXnneHangLabChatServer = useXnneHangLabChatServer;
             LogApiRequestBody = logApiRequestBody;
             ThinkMode = thinkMode;
             HierarchicalMemory = hierarchicalMemory;
