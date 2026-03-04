@@ -2098,7 +2098,12 @@ namespace ChillAIMod
 
             if (success && !string.IsNullOrEmpty(rawResponse))
             {
-                var (angel, devil) = ParsePredictedReplies(rawResponse);
+                // 先从 OpenAI 格式响应中提取 content 字段
+                string content = ExtractContentFromResponse(rawResponse);
+                StartCoroutine(ShowDebugLog($"[预测] 提取 content: {content.Length}字"));
+                
+                // 解析 angel/devil
+                var (angel, devil) = ParsePredictedReplies(content);
                 
                 if (!string.IsNullOrEmpty(angel) || !string.IsNullOrEmpty(devil))
                 {
@@ -2121,6 +2126,77 @@ namespace ChillAIMod
             }
 
             _isPredicting = false;
+        }
+
+        /// <summary>
+        /// 从 OpenAI 格式响应中提取 content 字段
+        /// 示例输入：{"choices":[{"message":{"content":"{\\n  \\"angel\\": \\"...\\",\\n  \\"devil\\": \\"...\\",\\n}"}}]}
+        /// 示例输出：{\n  "angel": "...",\n  "devil": "...",\n}
+        /// </summary>
+        private string ExtractContentFromResponse(string openaiResponse)
+        {
+            // 查找 "content" 关键字
+            int contentKeyIdx = openaiResponse.IndexOf("\"content\"");
+            if (contentKeyIdx < 0)
+            {
+                Log.Warning("[提取 Content] 未找到 content 字段");
+                return openaiResponse;
+            }
+            
+            // 找到 content: 后面的第一个引号
+            int colonIdx = openaiResponse.IndexOf(":", contentKeyIdx);
+            if (colonIdx < 0)
+            {
+                Log.Warning("[提取 Content] 未找到冒号");
+                return openaiResponse;
+            }
+            
+            // 跳过冒号后的空格和引号
+            int contentStart = colonIdx + 1;
+            while (contentStart < openaiResponse.Length && 
+                   (openaiResponse[contentStart] == ' ' || openaiResponse[contentStart] == '"'))
+            {
+                contentStart++;
+            }
+            
+            // 从 contentStart 开始，找到最后一个 } 之前的位置
+            // 因为 content 的内容是一个完整的 JSON 对象 {...}
+            int braceCount = 0;
+            int contentEnd = contentStart;
+            bool foundFirstBrace = false;
+            
+            for (int i = contentStart; i < openaiResponse.Length; i++)
+            {
+                char c = openaiResponse[i];
+                if (c == '{')
+                {
+                    braceCount++;
+                    foundFirstBrace = true;
+                }
+                else if (c == '}')
+                {
+                    braceCount--;
+                    if (foundFirstBrace && braceCount == 0)
+                    {
+                        contentEnd = i + 1;
+                        break;
+                    }
+                }
+            }
+            
+            if (contentEnd <= contentStart)
+            {
+                Log.Warning($"[提取 Content] 未找到完整内容 (start={contentStart}, end={contentEnd})");
+                return openaiResponse;
+            }
+            
+            string content = openaiResponse.Substring(contentStart, contentEnd - contentStart);
+            
+            // 处理转义：将 \n 转为换行，\" 转为引号
+            content = content.Replace("\\n", "\n").Replace("\\"", "\"").Replace("\\\\", "\\");
+            
+            Log.Info($"[提取 Content] 成功，长度={content.Length}");
+            return content;
         }
 
         /// <summary>
