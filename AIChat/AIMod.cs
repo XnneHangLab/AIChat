@@ -68,11 +68,21 @@ namespace ChillAIMod
         // --- 新增：窗口标题显示配置 ---
         private ConfigEntry<bool> _showWindowTitle;
 
+        // --- 新增：XnneHangLab Chat Server 独立配置 ---
+        private ConfigEntry<bool> _useXnneHangLabChatServer;
+        private ConfigEntry<string> _xnneHangLabChatBaseUrl;
+        private ConfigEntry<bool> _disablePersonaWhenUsingChatServer;
+
+        // --- 新增：预测对话配置 ---
+        private ConfigEntry<string> _predictPromptConfig;
+
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
         private bool _showTtsSettings = false;
         private bool _showInterfaceSettings = false;
         private bool _showPersonaSettings = false;
+        private bool _showXnneHangLabChatSettings = false;
+        private bool _showPredictSettings = false;
 
         // --- 录音相关变量 ---
         private AudioClip _recordingClip;
@@ -229,6 +239,20 @@ namespace ChillAIMod
             _xnneHangLabBaseUrlConfig = Config.Bind("1. LLM", "XnneHangLab_Base_URL",
                 "http://127.0.0.1:12393",
                 "XnneHangLab Server 根地址（勾选 XnneHangLab 时生效，各端点由代码自动拼接）");
+
+            // --- 新增：XnneHangLab Chat Server 独立配置 ---
+            _useXnneHangLabChatServer = Config.Bind("6. XnneHangLab Chat", "Use_XnneHangLab_Chat_Server", false,
+                "启用 XnneHangLab Chat Server（启用后主对话接入 /memory/chat 端点，有记忆存储）");
+            _xnneHangLabChatBaseUrl = Config.Bind("6. XnneHangLab Chat", "Base_URL",
+                "http://127.0.0.1:12393",
+                "XnneHangLab Server 根地址（端点由代码自动拼接为 {base}/memory/chat）");
+            _disablePersonaWhenUsingChatServer = Config.Bind("6. XnneHangLab Chat", "Disable_Persona_When_Using_Chat_Server", false,
+                "使用 XnneHangLab Chat Server 时禁用人设提示词（Chat Server 自行管理 System Prompt）");
+
+            // --- 新增：预测对话配置 ---
+            _predictPromptConfig = Config.Bind("7. Predict", "Predict_Prompt",
+                "You are a helpful assistant that predicts user replies. Generate two different responses: one kind and supportive (小天使), one mischievous and playful (小恶魔).",
+                "预测对话 System Prompt（用于生成预选回复，下一个 PR 实现）");
 
             // ===========================================
 
@@ -772,10 +796,119 @@ namespace ChillAIMod
                     }
                     GUILayout.EndHorizontal();
                     GUILayout.Space(5);
+                    
+                    // 新增：禁用人设提示词开关
+                    _disablePersonaWhenUsingChatServer.Value = GUILayout.Toggle(
+                        _disablePersonaWhenUsingChatServer.Value,
+                        "禁用人设提示词（使用 XnneHangLab Chat Server 时建议勾选，由 Server 自行管理 System Prompt）",
+                        GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
                     GUILayout.Label("人设（系统提示词）：");
                     _personaScrollPosition = GUILayout.BeginScrollView(_personaScrollPosition, GUILayout.Height(elementHeight * 6));
                     _personaConfig.Value = GUILayout.TextArea(_personaConfig.Value, GUILayout.ExpandHeight(true));
                     GUILayout.EndScrollView();
+                    GUILayout.Space(5);
+                }
+                
+                GUILayout.EndVertical();
+
+                GUILayout.Space(10);
+
+                // ================= XnneHangLab Chat Server 配置区域 =================
+                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
+                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server" : "▶️ XnneHangLab Chat Server";
+                if (GUILayout.Button(xnneChatBtnText, GUILayout.Height(elementHeight)))
+                {
+                    _showXnneHangLabChatSettings = !_showXnneHangLabChatSettings;
+                }
+                
+                if (_showXnneHangLabChatSettings)
+                {
+                    GUILayout.Space(5);
+                    
+                    // 启用开关
+                    _useXnneHangLabChatServer.Value = GUILayout.Toggle(
+                        _useXnneHangLabChatServer.Value,
+                        "启用 XnneHangLab Chat Server",
+                        GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                    
+                    if (_useXnneHangLabChatServer.Value)
+                    {
+                        // Base URL 输入框
+                        GUILayout.Label("Server 根地址：");
+                        _xnneHangLabChatBaseUrl.Value = GUILayout.TextField(
+                            _xnneHangLabChatBaseUrl.Value,
+                            GUILayout.Height(elementHeight),
+                            GUILayout.MinWidth(50f));
+                        
+                        // 端点说明
+                        GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
+                        endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                        Color prevC = GUI.color;
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
+                        GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
+                        GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
+                        GUI.color = prevC;
+                        
+                        GUILayout.Space(5);
+                        
+                        // 提示信息
+                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                        infoStyle.wordWrap = true;
+                        GUI.color = new Color(0.8f, 1f, 0.8f);
+                        GUILayout.Label("✓ 启用后主对话将接入有记忆存储的 /memory/chat 端点", infoStyle);
+                        GUILayout.Label("✓ 建议在人设配置中勾选\"禁用人设提示词\"，由 Chat Server 自行管理 System Prompt", infoStyle);
+                        GUI.color = prevC;
+                    }
+                    else
+                    {
+                        // 未启用时的提示
+                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                        infoStyle.wordWrap = true;
+                        Color prevC = GUI.color;
+                        GUI.color = new Color(1f, 0.9f, 0.7f);
+                        GUILayout.Label("未启用。启用后可独立于 LLM 配置使用 XnneHangLab 的有记忆对话端点。", infoStyle);
+                        GUI.color = prevC;
+                    }
+                    
+                    GUILayout.Space(5);
+                }
+                
+                GUILayout.EndVertical();
+
+                GUILayout.Space(5);
+
+                // ================= 预测对话配置区域 =================
+                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
+                string predictBtnText = _showPredictSettings ? "🔽 预测对话设置" : "▶️ 预测对话设置";
+                if (GUILayout.Button(predictBtnText, GUILayout.Height(elementHeight)))
+                {
+                    _showPredictSettings = !_showPredictSettings;
+                }
+                
+                if (_showPredictSettings)
+                {
+                    GUILayout.Space(5);
+                    
+                    GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                    infoStyle.wordWrap = true;
+                    Color prevC = GUI.color;
+                    GUI.color = new Color(1f, 0.9f, 0.7f);
+                    GUILayout.Label("⚠️ 此功能正在开发中（下一个 PR 实现）", infoStyle);
+                    GUILayout.Label("功能说明：利用无状态大模型 + 简单 System Prompt 预测用户回复，生成\"小天使\"与\"小恶魔\"两个风格的预选回复供用户选择。", infoStyle);
+                    GUI.color = prevC;
+                    
+                    GUILayout.Space(5);
+                    GUILayout.Label("预测对话 System Prompt：");
+                    _predictPromptConfig.Value = GUILayout.TextArea(
+                        _predictPromptConfig.Value,
+                        GUILayout.Height(elementHeight * 4),
+                        GUILayout.MinWidth(50f));
+                    
                     GUILayout.Space(5);
                 }
                 
@@ -1036,15 +1169,30 @@ namespace ChillAIMod
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
+            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用，由后端管理所有模型和 API key
+            bool useChatServer = _useXnneHangLabChatServer.Value;
+            
+            // 如果启用了 Chat Server 且勾选了禁用人设，则不发送 SystemPrompt
+            string systemPromptToSend = "";
+            if (useChatServer && _disablePersonaWhenUsingChatServer.Value)
+            {
+                systemPromptToSend = ""; // Chat Server 自行管理 System Prompt
+            }
+            else
+            {
+                systemPromptToSend = _personaConfig.Value;
+            }
+            
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = _apiKeyConfig.Value,
-                ModelName = _modelConfig.Value,
-                SystemPrompt = _personaConfig.Value,
+                ApiKey = useChatServer ? "" : _apiKeyConfig.Value, // Chat Server 不需要 API Key
+                ModelName = useChatServer ? "" : _modelConfig.Value, // Chat Server 不需要 Model Name
+                SystemPrompt = systemPromptToSend,
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLabChatServer = useChatServer, // 新增字段
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
@@ -1069,7 +1217,7 @@ namespace ChillAIMod
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
                     // TODO: 以後改用 JsonUtility 直接解析
-                    if (requestContext.UseXnneHangLab)
+                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
                     {
                         fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
                     }
@@ -1721,8 +1869,14 @@ namespace ChillAIMod
         /// </summary>
         private string GetChatUrl()
         {
+            // 新增：优先检查独立的 XnneHangLab Chat Server 配置
+            if (_useXnneHangLabChatServer.Value)
+                return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/memory/chat";
+            
+            // 兼容旧配置
             if (_useXnneHangLab.Value)
                 return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/chat";
+            
             return _chatApiUrlConfig.Value;
         }
 
@@ -1731,9 +1885,14 @@ namespace ChillAIMod
         /// </summary>
         IEnumerator PostInterruptSignal()
         {
-            if (!_useXnneHangLab.Value) yield break;
+            // 新增：支持独立的 XnneHangLab Chat Server 配置
+            if (!_useXnneHangLabChatServer.Value && !_useXnneHangLab.Value) yield break;
 
-            string url = _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/interrupt";
+            string baseUrl = _useXnneHangLabChatServer.Value 
+                ? _xnneHangLabChatBaseUrl.Value 
+                : _xnneHangLabBaseUrlConfig.Value;
+            
+            string url = baseUrl.TrimEnd('/') + "/memory/interrupt";
             Log.Info($"[中断] 发送 POST {url}");
 
             using (var req = new UnityWebRequest(url, "POST"))
@@ -1788,15 +1947,19 @@ namespace ChillAIMod
         {
             Log.Info("[HierarchicalMemory] >>> 开始调用 LLM 进行总结...");
 
+            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用
+            bool useChatServer = _useXnneHangLabChatServer.Value;
+            
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = _apiKeyConfig.Value,
-                ModelName = _modelConfig.Value,
+                ApiKey = useChatServer ? "" : _apiKeyConfig.Value,
+                ModelName = useChatServer ? "" : _modelConfig.Value,
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLabChatServer = useChatServer,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
                 HierarchicalMemory = null,
@@ -1813,7 +1976,7 @@ namespace ChillAIMod
                 {
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     string summary;
-                    if (requestContext.UseXnneHangLab)
+                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
                     {
                         summary = rawResponse;
                     }

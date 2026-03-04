@@ -21,7 +21,8 @@ namespace AIChat.Services
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
                 // XnneHangLab Chat Server 不需要 API Key，Ollama 也不需要
-                if (!requestContext.UseLocalOllama && !requestContext.UseXnneHangLab)
+                // 新增：UseXnneHangLabChatServer 是独立配置，也不需要 API Key
+                if (!requestContext.UseLocalOllama && !requestContext.UseXnneHangLab && !requestContext.UseXnneHangLabChatServer)
                 {
                     request.SetRequestHeader("Authorization", "Bearer " + requestContext.ApiKey);
                 }

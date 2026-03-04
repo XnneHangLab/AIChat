@@ -21,6 +21,7 @@ namespace AIChat.Utils
         public string UserPrompt;
         public bool UseLocalOllama;
         public bool UseXnneHangLab;
+        public bool UseXnneHangLabChatServer;
         public bool LogApiRequestBody;
         public bool FixApiPathForThinkMode;
         public ThinkMode ThinkMode;
@@ -40,6 +41,7 @@ namespace AIChat.Utils
             string userPrompt = "",
             bool useLocalOllama = false,
             bool useXnneHangLab = false,
+            bool useXnneHangLabChatServer = false,
             bool logApiRequestBody = false,
             ThinkMode thinkMode = ThinkMode.Default,
             HierarchicalMemory hierarchicalMemory = null,
@@ -57,6 +59,7 @@ namespace AIChat.Utils
             UserPrompt = userPrompt;
             UseLocalOllama = useLocalOllama;
             UseXnneHangLab = useXnneHangLab;
+            UseXnneHangLabChatServer = useXnneHangLabChatServer;
             LogApiRequestBody = logApiRequestBody;
             ThinkMode = thinkMode;
             HierarchicalMemory = hierarchicalMemory;
@@ -203,7 +206,8 @@ namespace AIChat.Utils
             string jsonBody;
 
             // XnneHangLab Chat Server：/memory/chat 端点格式
-            if (requestContext.UseXnneHangLab)
+            // 新增：UseXnneHangLabChatServer 是独立配置，UseXnneHangLab 是旧配置
+            if (requestContext.UseXnneHangLabChatServer || requestContext.UseXnneHangLab)
             {
                 // 检查 URL 是否包含 /memory/chat
                 bool useChatEndpoint = requestContext.ApiUrl.Contains("/memory/chat");
@@ -211,11 +215,15 @@ namespace AIChat.Utils
                 if (useChatEndpoint)
                 {
                     // /memory/chat 端点：system prompt 由 server 端生成，不需要客户端发送
-                    // 只需要发送 message 和可选的 session_id
+                    // 当使用 UseXnneHangLabChatServer 时，后端已配置好所有模型和 API key，客户端只发送 message
                     string sessionParam = ""; // 可以后续扩展支持 session_id
-                    string modelParam = !string.IsNullOrEmpty(requestContext.ModelName) 
-                        ? ", \"model\": \"" + requestContext.ModelName + "\"" 
-                        : "";
+                    
+                    // 仅在使用旧配置 (UseXnneHangLab) 且 ModelName 不为空时，才发送 model 参数
+                    string modelParam = "";
+                    if (requestContext.UseXnneHangLab && !string.IsNullOrEmpty(requestContext.ModelName))
+                    {
+                        modelParam = ", \"model\": \"" + requestContext.ModelName + "\"";
+                    }
                     
                     jsonBody = "{ \"message\": \"" + ResponseParser.EscapeJson(userPromptWithMemory) + "\"" + sessionParam + modelParam + " }";
                 }
