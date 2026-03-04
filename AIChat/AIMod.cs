@@ -75,6 +75,7 @@ namespace ChillAIMod
 
         // --- 新增：预测对话配置 ---
         private ConfigEntry<string> _predictPromptConfig;
+        private ConfigEntry<bool> _enablePredictReply;
 
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
@@ -83,6 +84,18 @@ namespace ChillAIMod
         private bool _showPersonaSettings = false;
         private bool _showXnneHangLabChatSettings = false;
         private bool _showPredictSettings = false;
+
+        // --- 预测回复相关变量 ---
+        private string _predictedAngelReply = "";
+        private string _predictedDevilReply = "";
+        private bool _isPredicting = false;
+        private bool _showPredictedReplies = false;
+        private bool _pendingPredictResult = false; // TTS 播放期间收到预测结果
+        
+        // --- 预测上下文（2-3 轮对话，4-6 条消息） ---
+        private List<string> _predictContext = new List<string>();
+        private const int MaxContextMessages = 6; // 最多 6 条消息（3 轮）
+        private const int ContextTrimCount = 2;   // 超出时删除最旧的 2 条
 
         // --- 录音相关变量 ---
         private AudioClip _recordingClip;
@@ -252,7 +265,10 @@ namespace ChillAIMod
             // --- 新增：预测对话配置 ---
             _predictPromptConfig = Config.Bind("7. Predict", "Predict_Prompt",
                 "You are a helpful assistant that predicts user replies. Generate two different responses: one kind and supportive (小天使), one mischievous and playful (小恶魔).",
-                "预测对话 System Prompt（用于生成预选回复，下一个 PR 实现）");
+                "预测对话 System Prompt");
+            
+            _enablePredictReply = Config.Bind("7. Predict", "Enable_Predict_Reply", false,
+                "启用自动预测回复（AI 回复后自动生成预选回复，复用 LLM 配置）");
 
             // ===========================================
 
@@ -894,6 +910,28 @@ namespace ChillAIMod
                 {
                     GUILayout.Space(5);
                     
+                    // 启用开关
+                    _enablePredictReply.Value = GUILayout.Toggle(
+                        _enablePredictReply.Value,
+                        "启用自动预测回复（AI 回复后自动生成预选回复）",
+                        GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                    
+                    if (_enablePredictReply.Value)
+                    {
+                        // 提示信息
+                        GUIStyle infoStyle2 = new GUIStyle(GUI.skin.label);
+                        infoStyle2.wordWrap = true;
+                        Color prevC2 = GUI.color;
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label("ℹ️ 预测功能复用 LLM 配置（API URL、API Key、Model Name）", infoStyle2);
+                        GUILayout.Label("ℹ️ 触发时机：AI 完整回复后自动预测，TTS 播放完毕后显示预览", infoStyle2);
+                        GUI.color = prevC2;
+                    }
+                    
+                    GUILayout.Space(5);
+                    
                     GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
                     infoStyle.wordWrap = true;
                     Color prevC = GUI.color;
@@ -1033,6 +1071,53 @@ namespace ChillAIMod
             _playerInput = GUILayout.TextArea(_playerInput, largeInputStyle, GUILayout.Height(dynamicInputHeight));
 
             GUILayout.Space(5);
+            
+            // === 预测回复显示区域 ===
+            if (_isPredicting)
+            {
+                // 显示加载状态
+                float predictBoxWidth = _windowRect.width - 50f;
+                GUILayout.BeginVertical("box", GUILayout.Width(predictBoxWidth));
+                GUILayout.Label("💡 正在生成预测回复...", GUILayout.Height(elementHeight));
+                GUILayout.EndVertical();
+                GUILayout.Space(5);
+            }
+            else if (_showPredictedReplies && (!string.IsNullOrEmpty(_predictedAngelReply) || !string.IsNullOrEmpty(_predictedDevilReply)))
+            {
+                float predictBoxWidth = _windowRect.width - 50f; // 与设置框对齐
+                GUILayout.BeginVertical("box", GUILayout.Width(predictBoxWidth));
+                
+                GUIStyle predictTitleStyle = new GUIStyle(GUI.skin.label);
+                predictTitleStyle.fontStyle = FontStyle.Bold;
+                GUILayout.Label("💡 预测回复（点击填充）", predictTitleStyle, GUILayout.Height(elementHeight));
+                
+                GUILayout.Space(3);
+                
+                // 小天使选项（不显示扎眼前缀）
+                if (!string.IsNullOrEmpty(_predictedAngelReply))
+                {
+                    if (GUILayout.Button(_predictedAngelReply, GUILayout.Height(elementHeight * 2)))
+                    {
+                        _playerInput = _predictedAngelReply;
+                        _showPredictedReplies = false;
+                    }
+                    GUILayout.Space(3);
+                }
+                
+                // 小恶魔选项（不显示扎眼前缀）
+                if (!string.IsNullOrEmpty(_predictedDevilReply))
+                {
+                    if (GUILayout.Button(_predictedDevilReply, GUILayout.Height(elementHeight * 2)))
+                    {
+                        _playerInput = _predictedDevilReply;
+                        _showPredictedReplies = false;
+                    }
+                }
+                
+                GUILayout.EndVertical();
+                GUILayout.Space(5);
+            }
+            
             GUI.backgroundColor = _isProcessing ? Color.gray : new Color(0.1725f, 0.1608f, 0.2784f);
 
             GUILayout.BeginHorizontal();
@@ -1054,6 +1139,11 @@ namespace ChillAIMod
                     _isInterrupted = true;
                     // fire-and-forget：通知 memory server 中断
                     StartCoroutine(PostInterruptSignal());
+                    // 中断时清除预测状态
+                    _showPredictedReplies = false;
+                    _pendingPredictResult = false;
+                    _predictedAngelReply = "";
+                    _predictedDevilReply = "";
                 }
                 GUI.backgroundColor = Color.white;
             }
@@ -1357,7 +1447,17 @@ namespace ChillAIMod
                 }
             }
 
-            // 5. 清理
+            // 5. 更新预测上下文
+            UpdatePredictContext(prompt, fullResponse);
+            
+            // 6. 触发预测回复（如果启用且未中断）
+            if (_enablePredictReply.Value && !_isInterrupted && !string.IsNullOrEmpty(fullResponse))
+            {
+                // 异步触发预测，不阻塞 UI
+                StartCoroutine(TriggerPredictReply(fullResponse));
+            }
+            
+            // 6. 清理
             UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
             _isInterrupted = false;
             _isProcessing = false;
@@ -1739,6 +1839,15 @@ namespace ChillAIMod
             }
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
+            
+            // TTS 播放完成，检查是否有待显示的预测结果
+            if (_pendingPredictResult)
+            {
+                _pendingPredictResult = false;
+                _showPredictedReplies = true;
+                StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
+                Log.Info("[预测回复] TTS 播放完成，显示预测结果");
+            }
         }
 
         // ================= 【新增录音控制】 =================
@@ -1907,6 +2016,334 @@ namespace ChillAIMod
                 else
                     Log.Info($"[中断] POST 成功: {req.responseCode}");
             }
+        }
+
+        // ================= 【预测回复相关方法】 =================
+
+        /// <summary>
+        /// 显示调试日志到字幕（不生成 TTS）
+        /// </summary>
+        IEnumerator ShowDebugLog(string message, float displaySeconds = 3f)
+        {
+            // 获取游戏 UI 上下文
+            GameObject canvas = GameObject.Find("Canvas");
+            if (canvas == null) yield break;
+            
+            Transform originalTextTrans = canvas.transform.Find("StorySystemUI/MessageWindow/NormalTextParent/NormalTextMessage");
+            if (originalTextTrans == null) yield break;
+            
+            GameObject originalTextObj = originalTextTrans.gameObject;
+            GameObject parentObj = originalTextObj.transform.parent.gameObject;
+            
+            // 创建临时字幕
+            GameObject debugTextObj = UIHelper.CreateOverlayText(parentObj);
+            Text debugText = debugTextObj.GetComponent<Text>();
+            
+            // 显示日志
+            debugText.text = message;
+            debugText.color = new Color(1f, 1f, 0.5f); // 淡黄色
+            
+            Log.Info($"[DebugLog] {message}");
+            
+            // 显示指定时间
+            yield return new WaitForSecondsRealtime(displaySeconds);
+            
+            // 清理
+            UnityEngine.Object.Destroy(debugTextObj);
+        }
+
+        /// <summary>
+        /// 触发预测回复：异步调用 LLM 生成预选回复
+        /// </summary>
+        IEnumerator TriggerPredictReply(string aiLastResponse)
+        {
+            _isPredicting = true;
+            _showPredictedReplies = false;
+            _pendingPredictResult = false;
+
+            // 显示调试日志到字幕
+            StartCoroutine(ShowDebugLog("[预测] 开始生成预测..."));
+            Log.Info("[预测回复] 开始生成预测...");
+
+            // 构建预测请求（复用 LLM 配置 + 上下文）
+            string contextPrompt = BuildContextPrompt();
+            string fullUserPrompt = contextPrompt + "Based on this conversation, predict the user's next reply. Generate TWO different responses (JSON format):\n{\n  \"angel\": \"kind and supportive reply\",\n  \"devil\": \"mischievous and playful reply\"\n}\n\nLast AI response: " + aiLastResponse;
+            
+            var requestContext = new LLMRequestContext
+            {
+                ApiUrl = _chatApiUrlConfig.Value,
+                ApiKey = _apiKeyConfig.Value,
+                ModelName = _modelConfig.Value,
+                SystemPrompt = _predictPromptConfig.Value,
+                UserPrompt = fullUserPrompt,
+                UseLocalOllama = _useOllama.Value,
+                UseXnneHangLab = false,
+                UseXnneHangLabChatServer = false,
+                LogApiRequestBody = _logApiRequestBodyConfig.Value,
+                ThinkMode = ThinkMode.Default,
+                HierarchicalMemory = null,
+                LogHeader = "PredictReply",
+                FixApiPathForThinkMode = false,
+                EnableTranslation = false,
+                DeepLXUrl = "",
+                TranslateTargetLang = ""
+            };
+
+            string rawResponse = "";
+            bool success = false;
+
+            yield return LLMClient.SendLLMRequest(
+                requestContext,
+                (response) =>
+                {
+                    rawResponse = response;
+                    success = true;
+                },
+                (errorMsg, responseCode) =>
+                {
+                    StartCoroutine(ShowDebugLog($"[预测] API 错误：{errorMsg}"));
+                    Log.Warning($"[预测回复] API 错误：{errorMsg} (Code: {responseCode})");
+                    success = false;
+                }
+            );
+
+            if (success && !string.IsNullOrEmpty(rawResponse))
+            {
+                // 先从 OpenAI 格式响应中提取 content 字段
+                string content = ExtractContentFromResponse(rawResponse);
+                StartCoroutine(ShowDebugLog($"[预测] 提取 content: {content.Length}字"));
+                
+                // 解析 angel/devil
+                var (angel, devil) = ParsePredictedReplies(content);
+                
+                if (!string.IsNullOrEmpty(angel) || !string.IsNullOrEmpty(devil))
+                {
+                    _predictedAngelReply = angel;
+                    _predictedDevilReply = devil;
+                    
+                    if (_isAISpeaking)
+                    {
+                        _pendingPredictResult = true;
+                        StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angel.Length}字 / {devil.Length}字，等待 TTS 完成后显示"));
+                        Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
+                    }
+                    else
+                    {
+                        _showPredictedReplies = true;
+                        StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angel.Length}字 / {devil.Length}字"));
+                        Log.Info("[预测回复] 预测完成并显示");
+                    }
+                }
+            }
+
+            _isPredicting = false;
+        }
+
+        /// <summary>
+        /// 从 OpenAI 格式响应中提取 content 字段
+        /// 示例输入：{"choices":[{"message":{"content":"{\\n  \\"angel\\": \\"...\\",\\n  \\"devil\\": \\"...\\",\\n}"}}]}
+        /// 示例输出：{\n  "angel": "...",\n  "devil": "...",\n}
+        /// </summary>
+        private string ExtractContentFromResponse(string openaiResponse)
+        {
+            // 查找 "content" 关键字
+            int contentKeyIdx = openaiResponse.IndexOf("\"content\"");
+            if (contentKeyIdx < 0)
+            {
+                Log.Warning("[提取 Content] 未找到 content 字段");
+                return openaiResponse;
+            }
+            
+            // 找到 content: 后面的第一个引号
+            int colonIdx = openaiResponse.IndexOf(":", contentKeyIdx);
+            if (colonIdx < 0)
+            {
+                Log.Warning("[提取 Content] 未找到冒号");
+                return openaiResponse;
+            }
+            
+            // 跳过冒号后的空格和引号
+            int contentStart = colonIdx + 1;
+            while (contentStart < openaiResponse.Length && 
+                   (openaiResponse[contentStart] == ' ' || openaiResponse[contentStart] == '"'))
+            {
+                contentStart++;
+            }
+            
+            // 从 contentStart 开始，找到最后一个 } 之前的位置
+            // 因为 content 的内容是一个完整的 JSON 对象 {...}
+            int braceCount = 0;
+            int contentEnd = contentStart;
+            bool foundFirstBrace = false;
+            
+            for (int i = contentStart; i < openaiResponse.Length; i++)
+            {
+                char c = openaiResponse[i];
+                if (c == '{')
+                {
+                    braceCount++;
+                    foundFirstBrace = true;
+                }
+                else if (c == '}')
+                {
+                    braceCount--;
+                    if (foundFirstBrace && braceCount == 0)
+                    {
+                        contentEnd = i + 1;
+                        break;
+                    }
+                }
+            }
+            
+            if (contentEnd <= contentStart)
+            {
+                Log.Warning($"[提取 Content] 未找到完整内容 (start={contentStart}, end={contentEnd})");
+                return openaiResponse;
+            }
+            
+            string content = openaiResponse.Substring(contentStart, contentEnd - contentStart);
+            
+            // 处理转义：将 \n 转为换行，\" 转为引号
+            content = content.Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\\\", "\\");
+            
+            Log.Info($"[提取 Content] 成功，长度={content.Length}");
+            return content;
+        }
+
+        /// <summary>
+        /// 解析预测回复的 JSON 响应
+        /// </summary>
+        private (string angel, string devil) ParsePredictedReplies(string jsonResponse)
+        {
+            try
+            {
+                jsonResponse = jsonResponse.Trim();
+                string angel = "";
+                string devil = "";
+                
+                int angelIdx = jsonResponse.IndexOf("\"angel\"");
+                if (angelIdx >= 0)
+                {
+                    int colonIdx = jsonResponse.IndexOf(":", angelIdx);
+                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
+                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
+                    if (quoteStart > 0 && quoteEnd > quoteStart)
+                    {
+                        angel = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
+                    }
+                }
+                
+                int devilIdx = jsonResponse.IndexOf("\"devil\"");
+                if (devilIdx >= 0)
+                {
+                    int colonIdx = jsonResponse.IndexOf(":", devilIdx);
+                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
+                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
+                    if (quoteStart > 0 && quoteEnd > quoteStart)
+                    {
+                        devil = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
+                    }
+                }
+                
+                if (string.IsNullOrEmpty(angel) && string.IsNullOrEmpty(devil))
+                {
+                    if (jsonResponse.Contains("小天使") && jsonResponse.Contains("小恶魔"))
+                    {
+                        string[] parts = jsonResponse.Split(new string[] { "小恶魔" }, System.StringSplitOptions.None);
+                        if (parts.Length >= 2)
+                        {
+                            angel = parts[0].Replace("小天使", "").Trim(':', '：', ' ');
+                            devil = parts[1].Trim(':', '：', ' ');
+                        }
+                    }
+                }
+                
+                // 清理 JSON 残留符号
+                angel = CleanJsonArtifacts(angel);
+                devil = CleanJsonArtifacts(devil);
+                
+                return (angel, devil);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[预测回复] JSON 解析失败：{ex.Message}");
+                return ("", "");
+            }
+        }
+
+        /// <summary>
+        /// 清理 JSON 残留符号（{, }, "", : 等）
+        /// </summary>
+        private string CleanJsonArtifacts(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            
+            // 移除开头和结尾的 JSON 符号
+            text = text.TrimStart('{', ' ', '\n', '\t', '"');
+            text = text.TrimEnd('}', ' ', '\n', '\t', '"');
+            
+            // 移除开头的 ": " 或 "": "
+            while (text.StartsWith("\":") || text.StartsWith("\": \""))
+            {
+                text = text.TrimStart(':', ' ', '"');
+            }
+            
+            return text.Trim();
+        }
+
+        /// <summary>
+        /// 更新预测上下文（维护 2-3 轮对话，4-6 条消息）
+        /// </summary>
+        private void UpdatePredictContext(string userMessage, string aiResponse)
+        {
+            // 添加用户消息
+            if (!string.IsNullOrEmpty(userMessage))
+            {
+                _predictContext.Add("User: " + userMessage);
+            }
+            
+            // 添加 AI 回复
+            if (!string.IsNullOrEmpty(aiResponse))
+            {
+                _predictContext.Add("AI: " + aiResponse);
+            }
+            
+            // 如果超出最大长度，删除最旧的 2 条
+            while (_predictContext.Count > MaxContextMessages)
+            {
+                // 删除最旧的 2 条（保持对话完整性）
+                if (_predictContext.Count >= 2)
+                {
+                    _predictContext.RemoveAt(0);
+                    _predictContext.RemoveAt(0);
+                }
+                else
+                {
+                    _predictContext.RemoveAt(0);
+                }
+            }
+            
+            Log.Info($"[预测上下文] 更新后长度={_predictContext.Count}");
+        }
+
+        /// <summary>
+        /// 构建预测用的上下文字符串
+        /// </summary>
+        private string BuildContextPrompt()
+        {
+            if (_predictContext.Count == 0)
+            {
+                return "";
+            }
+            
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("Conversation history:");
+            foreach (string msg in _predictContext)
+            {
+                sb.AppendLine(msg);
+            }
+            sb.AppendLine();
+            return sb.ToString();
         }
 
         // ================= 【分层记忆系统相关方法】 =================
