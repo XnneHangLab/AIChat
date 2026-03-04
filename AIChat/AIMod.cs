@@ -75,6 +75,8 @@ namespace ChillAIMod
 
         // --- 新增：预测对话配置 ---
         private ConfigEntry<string> _predictPromptConfig;
+        private ConfigEntry<bool> _enablePredictReply;
+        private ConfigEntry<string> _predictModelName;
 
         // --- 新增：各配置区域展开状态 ---
         private bool _showLlmSettings = false;
@@ -83,6 +85,13 @@ namespace ChillAIMod
         private bool _showPersonaSettings = false;
         private bool _showXnneHangLabChatSettings = false;
         private bool _showPredictSettings = false;
+
+        // --- 预测回复相关变量 ---
+        private string _predictedAngelReply = "";
+        private string _predictedDevilReply = "";
+        private bool _isPredicting = false;
+        private bool _showPredictedReplies = false;
+        private bool _pendingPredictResult = false; // TTS 播放期间收到预测结果
 
         // --- 录音相关变量 ---
         private AudioClip _recordingClip;
@@ -252,7 +261,12 @@ namespace ChillAIMod
             // --- 新增：预测对话配置 ---
             _predictPromptConfig = Config.Bind("7. Predict", "Predict_Prompt",
                 "You are a helpful assistant that predicts user replies. Generate two different responses: one kind and supportive (小天使), one mischievous and playful (小恶魔).",
-                "预测对话 System Prompt（用于生成预选回复，下一个 PR 实现）");
+                "预测对话 System Prompt");
+            
+            _enablePredictReply = Config.Bind("7. Predict", "Enable_Predict_Reply", false,
+                "启用自动预测回复（AI 回复后自动生成预选回复）");
+            _predictModelName = Config.Bind("7. Predict", "Predict_Model_Name", "openai/gpt-3.5-turbo",
+                "预测回复使用的模型名称（使用无状态 LLM，不受 Chat Server 影响）");
 
             // ===========================================
 
@@ -894,6 +908,37 @@ namespace ChillAIMod
                 {
                     GUILayout.Space(5);
                     
+                    // 启用开关
+                    _enablePredictReply.Value = GUILayout.Toggle(
+                        _enablePredictReply.Value,
+                        "启用自动预测回复（AI 回复后自动生成预选回复）",
+                        GUILayout.Height(elementHeight));
+                    
+                    GUILayout.Space(5);
+                    
+                    if (_enablePredictReply.Value)
+                    {
+                        // 模型名称
+                        GUILayout.Label("预测模型名称：");
+                        _predictModelName.Value = GUILayout.TextField(
+                            _predictModelName.Value,
+                            GUILayout.Height(elementHeight),
+                            GUILayout.MinWidth(50f));
+                        
+                        GUILayout.Space(5);
+                        
+                        // 提示信息
+                        GUIStyle infoStyle2 = new GUIStyle(GUI.skin.label);
+                        infoStyle2.wordWrap = true;
+                        Color prevC2 = GUI.color;
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label("ℹ️ 预测功能使用独立的无状态 LLM 配置，不受 XnneHangLab Chat Server 影响", infoStyle2);
+                        GUILayout.Label("ℹ️ 触发时机：AI 完整回复后自动预测，TTS 播放完毕后显示预览", infoStyle2);
+                        GUI.color = prevC2;
+                    }
+                    
+                    GUILayout.Space(5);
+                    
                     GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
                     infoStyle.wordWrap = true;
                     Color prevC = GUI.color;
@@ -1033,6 +1078,43 @@ namespace ChillAIMod
             _playerInput = GUILayout.TextArea(_playerInput, largeInputStyle, GUILayout.Height(dynamicInputHeight));
 
             GUILayout.Space(5);
+            
+            // === 预测回复显示区域 ===
+            if (_showPredictedReplies && (!string.IsNullOrEmpty(_predictedAngelReply) || !string.IsNullOrEmpty(_predictedDevilReply)))
+            {
+                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
+                
+                GUIStyle predictTitleStyle = new GUIStyle(GUI.skin.label);
+                predictTitleStyle.fontStyle = FontStyle.Bold;
+                GUILayout.Label("💡 预测回复（点击填充）", predictTitleStyle, GUILayout.Height(elementHeight));
+                
+                GUILayout.Space(3);
+                
+                // 小天使选项
+                if (!string.IsNullOrEmpty(_predictedAngelReply))
+                {
+                    if (GUILayout.Button("😇 小天使：" + _predictedAngelReply, GUILayout.Height(elementHeight * 2)))
+                    {
+                        _playerInput = _predictedAngelReply;
+                        _showPredictedReplies = false; // 点击后隐藏
+                    }
+                    GUILayout.Space(3);
+                }
+                
+                // 小恶魔选项
+                if (!string.IsNullOrEmpty(_predictedDevilReply))
+                {
+                    if (GUILayout.Button("😈 小恶魔：" + _predictedDevilReply, GUILayout.Height(elementHeight * 2)))
+                    {
+                        _playerInput = _predictedDevilReply;
+                        _showPredictedReplies = false; // 点击后隐藏
+                    }
+                }
+                
+                GUILayout.EndVertical();
+                GUILayout.Space(5);
+            }
+            
             GUI.backgroundColor = _isProcessing ? Color.gray : new Color(0.1725f, 0.1608f, 0.2784f);
 
             GUILayout.BeginHorizontal();
@@ -1054,6 +1136,11 @@ namespace ChillAIMod
                     _isInterrupted = true;
                     // fire-and-forget：通知 memory server 中断
                     StartCoroutine(PostInterruptSignal());
+                    // 中断时清除预测状态
+                    _showPredictedReplies = false;
+                    _pendingPredictResult = false;
+                    _predictedAngelReply = "";
+                    _predictedDevilReply = "";
                 }
                 GUI.backgroundColor = Color.white;
             }
@@ -1357,7 +1444,14 @@ namespace ChillAIMod
                 }
             }
 
-            // 5. 清理
+            // 5. 触发预测回复（如果启用且未中断）
+            if (_enablePredictReply.Value && !_isInterrupted && !string.IsNullOrEmpty(fullResponse))
+            {
+                // 异步触发预测，不阻塞 UI
+                StartCoroutine(TriggerPredictReply(fullResponse));
+            }
+            
+            // 6. 清理
             UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
             _isInterrupted = false;
             _isProcessing = false;
@@ -1739,6 +1833,14 @@ namespace ChillAIMod
             }
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
+            
+            // TTS 播放完成，检查是否有待显示的预测结果
+            if (_pendingPredictResult)
+            {
+                _pendingPredictResult = false;
+                _showPredictedReplies = true;
+                Log.Info("[预测回复] TTS 播放完成，显示预测结果");
+            }
         }
 
         // ================= 【新增录音控制】 =================
@@ -1906,6 +2008,141 @@ namespace ChillAIMod
                     Log.Warning($"[中断] POST 失败（忽略）: {req.error}");
                 else
                     Log.Info($"[中断] POST 成功: {req.responseCode}");
+            }
+        }
+
+        // ================= 【预测回复相关方法】 =================
+
+        /// <summary>
+        /// 触发预测回复：异步调用 LLM 生成预选回复
+        /// </summary>
+        IEnumerator TriggerPredictReply(string aiLastResponse)
+        {
+            _isPredicting = true;
+            _showPredictedReplies = false;
+            _pendingPredictResult = false;
+
+            Log.Info("[预测回复] 开始生成预测...");
+
+            // 构建预测请求
+            var requestContext = new LLMRequestContext
+            {
+                ApiUrl = _useXnneHangLabChatServer.Value 
+                    ? _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/v1/chat/completions" 
+                    : _chatApiUrlConfig.Value,
+                ApiKey = _useXnneHangLabChatServer.Value ? "" : _apiKeyConfig.Value,
+                ModelName = _predictModelName.Value,
+                SystemPrompt = _predictPromptConfig.Value,
+                UserPrompt = "Based on this AI response, generate two user replies (JSON format):\nAI: " + aiLastResponse,
+                UseLocalOllama = _useOllama.Value,
+                UseXnneHangLab = false,
+                UseXnneHangLabChatServer = false,
+                LogApiRequestBody = _logApiRequestBodyConfig.Value,
+                ThinkMode = ThinkMode.Default,
+                HierarchicalMemory = null,
+                LogHeader = "PredictReply",
+                FixApiPathForThinkMode = false,
+                EnableTranslation = false,
+                DeepLXUrl = "",
+                TranslateTargetLang = ""
+            };
+
+            string rawResponse = "";
+            bool success = false;
+
+            yield return LLMClient.SendLLMRequest(
+                requestContext,
+                (response) =>
+                {
+                    rawResponse = response;
+                    success = true;
+                },
+                (errorMsg, responseCode) =>
+                {
+                    Log.Warning($"[预测回复] API 错误：{errorMsg} (Code: {responseCode})");
+                    success = false;
+                }
+            );
+
+            if (success && !string.IsNullOrEmpty(rawResponse))
+            {
+                var (angel, devil) = ParsePredictedReplies(rawResponse);
+                
+                if (!string.IsNullOrEmpty(angel) || !string.IsNullOrEmpty(devil))
+                {
+                    _predictedAngelReply = angel;
+                    _predictedDevilReply = devil;
+                    
+                    if (_isAISpeaking)
+                    {
+                        _pendingPredictResult = true;
+                        Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
+                    }
+                    else
+                    {
+                        _showPredictedReplies = true;
+                        Log.Info("[预测回复] 预测完成并显示");
+                    }
+                }
+            }
+
+            _isPredicting = false;
+        }
+
+        /// <summary>
+        /// 解析预测回复的 JSON 响应
+        /// </summary>
+        private (string angel, string devil) ParsePredictedReplies(string jsonResponse)
+        {
+            try
+            {
+                jsonResponse = jsonResponse.Trim();
+                string angel = "";
+                string devil = "";
+                
+                int angelIdx = jsonResponse.IndexOf("\"angel\"");
+                if (angelIdx >= 0)
+                {
+                    int colonIdx = jsonResponse.IndexOf(":", angelIdx);
+                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
+                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
+                    if (quoteStart > 0 && quoteEnd > quoteStart)
+                    {
+                        angel = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
+                    }
+                }
+                
+                int devilIdx = jsonResponse.IndexOf("\"devil\"");
+                if (devilIdx >= 0)
+                {
+                    int colonIdx = jsonResponse.IndexOf(":", devilIdx);
+                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
+                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
+                    if (quoteStart > 0 && quoteEnd > quoteStart)
+                    {
+                        devil = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
+                    }
+                }
+                
+                if (string.IsNullOrEmpty(angel) && string.IsNullOrEmpty(devil))
+                {
+                    if (jsonResponse.Contains("小天使") && jsonResponse.Contains("小恶魔"))
+                    {
+                        string[] parts = jsonResponse.Split(new string[] { "小恶魔" }, System.StringSplitOptions.None);
+                        if (parts.Length >= 2)
+                        {
+                            angel = parts[0].Replace("小天使", "").Trim(':', '：', ' ');
+                            devil = parts[1].Trim(':', '：', ' ');
+                        }
+                    }
+                }
+                
+                return (angel, devil);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[预测回复] JSON 解析失败：{ex.Message}");
+                return ("", "");
             }
         }
 
