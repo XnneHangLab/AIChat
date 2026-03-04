@@ -1080,9 +1080,19 @@ namespace ChillAIMod
             GUILayout.Space(5);
             
             // === 预测回复显示区域 ===
-            if (_showPredictedReplies && (!string.IsNullOrEmpty(_predictedAngelReply) || !string.IsNullOrEmpty(_predictedDevilReply)))
+            if (_isPredicting)
             {
-                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
+                // 显示加载状态
+                float predictBoxWidth = _windowRect.width - 50f;
+                GUILayout.BeginVertical("box", GUILayout.Width(predictBoxWidth));
+                GUILayout.Label("💡 正在生成预测回复...", GUILayout.Height(elementHeight));
+                GUILayout.EndVertical();
+                GUILayout.Space(5);
+            }
+            else if (_showPredictedReplies && (!string.IsNullOrEmpty(_predictedAngelReply) || !string.IsNullOrEmpty(_predictedDevilReply)))
+            {
+                float predictBoxWidth = _windowRect.width - 50f; // 与设置框对齐
+                GUILayout.BeginVertical("box", GUILayout.Width(predictBoxWidth));
                 
                 GUIStyle predictTitleStyle = new GUIStyle(GUI.skin.label);
                 predictTitleStyle.fontStyle = FontStyle.Bold;
