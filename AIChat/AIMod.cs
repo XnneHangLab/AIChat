@@ -2193,7 +2193,7 @@ namespace ChillAIMod
             string content = openaiResponse.Substring(contentStart, contentEnd - contentStart);
             
             // 处理转义：将 \n 转为换行，\" 转为引号
-            content = content.Replace("\\n", "\n").Replace("\\"", "\"").Replace("\\\\", "\\");
+            content = content.Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\\\", "\\");
             
             Log.Info($"[提取 Content] 成功，长度={content.Length}");
             return content;
