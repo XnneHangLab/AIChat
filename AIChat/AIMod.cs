@@ -1088,24 +1088,24 @@ namespace ChillAIMod
                 
                 GUILayout.Space(3);
                 
-                // 小天使选项
+                // 小天使选项（不显示扎眼前缀）
                 if (!string.IsNullOrEmpty(_predictedAngelReply))
                 {
-                    if (GUILayout.Button("😇 小天使：" + _predictedAngelReply, GUILayout.Height(elementHeight * 2)))
+                    if (GUILayout.Button(_predictedAngelReply, GUILayout.Height(elementHeight * 2)))
                     {
                         _playerInput = _predictedAngelReply;
-                        _showPredictedReplies = false; // 点击后隐藏
+                        _showPredictedReplies = false;
                     }
                     GUILayout.Space(3);
                 }
                 
-                // 小恶魔选项
+                // 小恶魔选项（不显示扎眼前缀）
                 if (!string.IsNullOrEmpty(_predictedDevilReply))
                 {
-                    if (GUILayout.Button("😈 小恶魔：" + _predictedDevilReply, GUILayout.Height(elementHeight * 2)))
+                    if (GUILayout.Button(_predictedDevilReply, GUILayout.Height(elementHeight * 2)))
                     {
                         _playerInput = _predictedDevilReply;
-                        _showPredictedReplies = false; // 点击后隐藏
+                        _showPredictedReplies = false;
                     }
                 }
                 
@@ -2247,6 +2247,10 @@ namespace ChillAIMod
                     }
                 }
                 
+                // 清理 JSON 残留符号
+                angel = CleanJsonArtifacts(angel);
+                devil = CleanJsonArtifacts(devil);
+                
                 return (angel, devil);
             }
             catch (Exception ex)
@@ -2254,6 +2258,26 @@ namespace ChillAIMod
                 Log.Warning($"[预测回复] JSON 解析失败：{ex.Message}");
                 return ("", "");
             }
+        }
+
+        /// <summary>
+        /// 清理 JSON 残留符号（{, }, "", : 等）
+        /// </summary>
+        private string CleanJsonArtifacts(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            
+            // 移除开头和结尾的 JSON 符号
+            text = text.TrimStart('{', ' ', '\n', '\t', '"');
+            text = text.TrimEnd('}', ' ', '\n', '\t', '"');
+            
+            // 移除开头的 ": " 或 "": "
+            while (text.StartsWith("\":") || text.StartsWith("\": \""))
+            {
+                text = text.TrimStart(':', ' ', '"');
+            }
+            
+            return text.Trim();
         }
 
         // ================= 【分层记忆系统相关方法】 =================
