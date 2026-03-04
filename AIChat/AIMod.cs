@@ -91,6 +91,11 @@ namespace ChillAIMod
         private bool _isPredicting = false;
         private bool _showPredictedReplies = false;
         private bool _pendingPredictResult = false; // TTS 播放期间收到预测结果
+        
+        // --- 预测上下文（2-3 轮对话，4-6 条消息） ---
+        private List<string> _predictContext = new List<string>();
+        private const int MaxContextMessages = 6; // 最多 6 条消息（3 轮）
+        private const int ContextTrimCount = 2;   // 超出时删除最旧的 2 条
 
         // --- 录音相关变量 ---
         private AudioClip _recordingClip;
@@ -1442,7 +1447,10 @@ namespace ChillAIMod
                 }
             }
 
-            // 5. 触发预测回复（如果启用且未中断）
+            // 5. 更新预测上下文
+            UpdatePredictContext(prompt, fullResponse);
+            
+            // 6. 触发预测回复（如果启用且未中断）
             if (_enablePredictReply.Value && !_isInterrupted && !string.IsNullOrEmpty(fullResponse))
             {
                 // 异步触发预测，不阻塞 UI
@@ -2057,14 +2065,17 @@ namespace ChillAIMod
             StartCoroutine(ShowDebugLog("[预测] 开始生成预测..."));
             Log.Info("[预测回复] 开始生成预测...");
 
-            // 构建预测请求（复用 LLM 配置）
+            // 构建预测请求（复用 LLM 配置 + 上下文）
+            string contextPrompt = BuildContextPrompt();
+            string fullUserPrompt = contextPrompt + "Based on this conversation, predict the user's next reply. Generate TWO different responses (JSON format):\n{\n  \"angel\": \"kind and supportive reply\",\n  \"devil\": \"mischievous and playful reply\"\n}\n\nLast AI response: " + aiLastResponse;
+            
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = _chatApiUrlConfig.Value,
                 ApiKey = _apiKeyConfig.Value,
                 ModelName = _modelConfig.Value,
                 SystemPrompt = _predictPromptConfig.Value,
-                UserPrompt = "Based on this AI response, generate two user replies (JSON format):\nAI: " + aiLastResponse,
+                UserPrompt = fullUserPrompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = false,
                 UseXnneHangLabChatServer = false,
@@ -2278,6 +2289,61 @@ namespace ChillAIMod
             }
             
             return text.Trim();
+        }
+
+        /// <summary>
+        /// 更新预测上下文（维护 2-3 轮对话，4-6 条消息）
+        /// </summary>
+        private void UpdatePredictContext(string userMessage, string aiResponse)
+        {
+            // 添加用户消息
+            if (!string.IsNullOrEmpty(userMessage))
+            {
+                _predictContext.Add("User: " + userMessage);
+            }
+            
+            // 添加 AI 回复
+            if (!string.IsNullOrEmpty(aiResponse))
+            {
+                _predictContext.Add("AI: " + aiResponse);
+            }
+            
+            // 如果超出最大长度，删除最旧的 2 条
+            while (_predictContext.Count > MaxContextMessages)
+            {
+                // 删除最旧的 2 条（保持对话完整性）
+                if (_predictContext.Count >= 2)
+                {
+                    _predictContext.RemoveAt(0);
+                    _predictContext.RemoveAt(0);
+                }
+                else
+                {
+                    _predictContext.RemoveAt(0);
+                }
+            }
+            
+            Log.Info($"[预测上下文] 更新后长度={_predictContext.Count}");
+        }
+
+        /// <summary>
+        /// 构建预测用的上下文字符串
+        /// </summary>
+        private string BuildContextPrompt()
+        {
+            if (_predictContext.Count == 0)
+            {
+                return "";
+            }
+            
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("Conversation history:");
+            foreach (string msg in _predictContext)
+            {
+                sb.AppendLine(msg);
+            }
+            sb.AppendLine();
+            return sb.ToString();
         }
 
         // ================= 【分层记忆系统相关方法】 =================
