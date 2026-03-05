@@ -1605,7 +1605,10 @@ namespace ChillAIMod
                     yield break;
                 }
 
-                string originalText = sentences[i];  // 中文原文（字幕用）
+                // 防御性清洗：即使上游解析异常，也不让 [Emotion] ||| 标签流入翻译/TTS。
+                string originalText = ResponseParser.StripEmotionPrefix(sentences[i]);  // 中文原文（字幕用）
+                if (string.IsNullOrWhiteSpace(originalText))
+                    originalText = sentences[i].Trim();
                 string ttsText = originalText;       // TTS 用文本，默认用原文兜底
                 
                 // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS

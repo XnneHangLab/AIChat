@@ -93,8 +93,7 @@ namespace AIChat.Utils
         {
             LLMStandardResponse ret = new LLMStandardResponse(false, "Think", "", response);
 
-            // ================= 【尝试 JSON 格式解析】 =================
-            // 期望格式：{"emotion": "Happy", "voice_text": "こんにちは", "subtitle_text": "你好"}
+            // 1) JSON 格式：{"emotion":"Happy","voice_text":"...","subtitle_text":"..."}
             if (response.Trim().StartsWith("{"))
             {
                 try
@@ -119,52 +118,84 @@ namespace AIChat.Utils
                 }
             }
 
-            // ================= 【||| 格式解析】 =================
-            // 字段顺序：[Emotion] ||| SubtitleText (||| VoiceText)
-            // 2段：[Emotion] ||| 字幕文本        → VoiceText = SubtitleText（配合翻译模式）
-            // 3段：[Emotion] ||| 字幕文本 ||| TTS文本  → 双语兼容模式
-            // 1段或>3段：格式异常，打印完整内容供调试
+            // 2) 标准 ||| 格式
+            // [Emotion] ||| Subtitle
+            // [Emotion] ||| Subtitle ||| Voice
             string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
 
             if (parts.Length == 2)
             {
-                // 标准翻译模式：[Emotion] ||| 中文字幕
                 ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
                 ret.SubtitleText = parts[1].Trim();
-                ret.VoiceText = parts[1].Trim(); // TTS 用原文，翻译由 DeepLX 负责
+                ret.VoiceText = parts[1].Trim();
                 ret.Success = true;
                 Log.Info("[解析] 2段格式解析成功（翻译模式）");
+                return ret;
             }
-            else if (parts.Length == 3)
+
+            if (parts.Length == 3)
             {
-                // 双语兼容模式：[Emotion] ||| 字幕文本 ||| TTS文本
                 ret.EmotionTag = parts[0].Trim().Replace("[", "").Replace("]", "");
                 ret.SubtitleText = parts[1].Trim();
                 ret.VoiceText = parts[2].Trim();
                 ret.Success = true;
                 Log.Info("[解析] 3段格式解析成功（双语模式）");
+                return ret;
             }
-            else
+
+            // 3) 多情绪块格式（同一次回复里出现多个 [Emotion] ||| 段）
+            var tagMatches = System.Text.RegularExpressions.Regex.Matches(
+                response,
+                @"\[(?<emotion>[^\]\r\n]+)\]\s*\|\|\|\s*",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+
+            if (tagMatches.Count >= 2)
             {
-                // 格式异常：1段或>3段，打印完整内容便于调试
-                // 尽力提取：如果含 [xxx] 前缀就剥掉，剩余部分当字幕/TTS
-                Log.Warning($"[解析] 格式异常（{parts.Length} 段），完整内容：{response}");
-                string fallbackText = response;
-                var emotionMatch = System.Text.RegularExpressions.Regex.Match(response, @"^\[([^\]]+)\]\s*\|*\|*\|*\s*(.*)$", System.Text.RegularExpressions.RegexOptions.Singleline);
-                if (emotionMatch.Success)
+                ret.EmotionTag = tagMatches[0].Groups["emotion"].Value.Trim();
+                var chunks = new List<string>();
+
+                for (int i = 0; i < tagMatches.Count; i++)
                 {
-                    ret.EmotionTag = emotionMatch.Groups[1].Value.Trim();
-                    fallbackText = emotionMatch.Groups[2].Value.Trim();
+                    int start = tagMatches[i].Index + tagMatches[i].Length;
+                    int end = (i + 1 < tagMatches.Count) ? tagMatches[i + 1].Index : response.Length;
+                    int len = end - start;
+                    if (len <= 0) continue;
+
+                    string chunk = response.Substring(start, len).Trim();
+                    if (!string.IsNullOrEmpty(chunk))
+                        chunks.Add(chunk);
                 }
-                ret.SubtitleText = fallbackText;
-                ret.VoiceText = fallbackText;
+
+                if (chunks.Count > 0)
+                {
+                    string mergedText = string.Join("\n\n", chunks);
+                    ret.SubtitleText = mergedText;
+                    ret.VoiceText = mergedText;
+                    ret.Success = true;
+                    Log.Info($"[解析] 多情绪分段解析成功（{chunks.Count} 段）");
+                    return ret;
+                }
             }
 
-            if (!ret.Success) Log.Warning($"[格式错误] AI 回复不符合格式：{response}");
+            // 4) 兜底：尽力剥离首个 [Emotion] ||| 前缀，其余保留
+            Log.Warning($"[解析] 格式异常（{parts.Length} 段），完整内容：{response}");
+            string fallbackText = response;
+            var emotionMatch = System.Text.RegularExpressions.Regex.Match(
+                response,
+                @"^\[([^\]]+)\]\s*\|*\|*\|*\s*(.*)$",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
 
+            if (emotionMatch.Success)
+            {
+                ret.EmotionTag = emotionMatch.Groups[1].Value.Trim();
+                fallbackText = emotionMatch.Groups[2].Value.Trim();
+            }
+
+            ret.SubtitleText = fallbackText;
+            ret.VoiceText = fallbackText;
+            Log.Warning($"[格式错误] AI 回复不符合格式：{response}");
             return ret;
         }
-
         /// <summary>
         /// 简单的 JSON 字符串值提取（不依赖第三方库）
         /// </summary>
