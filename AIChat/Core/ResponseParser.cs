@@ -139,12 +139,14 @@ namespace AIChat.Core
         public static string StripEmotionPrefix(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
-            // 先 Trim 去掉前导空白/换行/BOM，再匹配 [Emotion] ||| 前缀
-            string trimmed = text.Trim().TrimStart('\uFEFF');
-            var match = Regex.Match(
-                trimmed, @"^\[[^\]]+\]\s*(?:\|{1,3}\s*)?(.*)$",
-                RegexOptions.Singleline);
-            return match.Success ? match.Groups[1].Value.Trim() : trimmed;
+            // 清理 BOM/前后空白，然后剥离所有 [Emotion] ||| 标记，避免标签进入 DeepLX/TTS。
+            string cleaned = text.Trim().TrimStart('\uFEFF');
+            cleaned = Regex.Replace(
+                cleaned,
+                @"\[[^\]\r\n]+\]\s*\|{1,3}\s*",
+                "",
+                RegexOptions.Multiline);
+            return cleaned.Trim();
         }
 
         public static string[] SplitByChinesePunctuation(string text)
