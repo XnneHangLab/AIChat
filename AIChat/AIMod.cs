@@ -1884,10 +1884,6 @@ namespace ChillAIMod
 
             _audioSource.Play();
 
-            int appendedFrames = 0;
-            if (player.Channels > 0)
-                appendedFrames = (int)(player.TotalAppendedSamples / player.Channels);
-
             bool completionReached = false;
             float completionReachedTime = 0f;
 
@@ -1898,12 +1894,10 @@ namespace ChillAIMod
 
                 if (player.Completed)
                 {
-                    if (player.Channels > 0)
-                        appendedFrames = (int)(player.TotalAppendedSamples / player.Channels);
-
-                    int playedFrames = _audioSource != null ? _audioSource.timeSamples : 0;
-                    int remainingFrames = appendedFrames - playedFrames;
-                    bool playbackCaughtUp = remainingFrames <= Mathf.CeilToInt(player.SampleRate * 0.02f);
+                    long appendedSamples = player.TotalAppendedSamples;
+                    long consumedSamples = player.TotalConsumedSamples;
+                    long remainingSamples = appendedSamples - consumedSamples;
+                    bool playbackCaughtUp = remainingSamples <= 0;
 
                     if (playbackCaughtUp)
                     {
