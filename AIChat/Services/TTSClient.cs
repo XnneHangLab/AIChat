@@ -402,12 +402,14 @@ namespace AIChat.Services
             StreamingAudioPlayer player,
             ManualLogSource logger,
             CancellationToken cancellationToken,
-            bool audioPathCheck = false)
+            bool audioPathCheck = false,
+            string requestLabel = null)
         {
             return Task.Run(async () =>
             {
                 try
                 {
+                    string label = string.IsNullOrWhiteSpace(requestLabel) ? "Qwen-TTS" : requestLabel;
                     string resolvedRefPath = ResolveReferenceAudioPath(refPath, audioPathCheck);
                     using (var content = new MultipartFormDataContent())
                     {
@@ -425,10 +427,12 @@ namespace AIChat.Services
                         {
                             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
                             request.Content = content;
+                            logger.LogInfo($"[{label}] 流式请求发出");
 
                             using (HttpResponseMessage response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
                             {
                                 response.EnsureSuccessStatusCode();
+                                logger.LogInfo($"[{label}] 已建立 SSE 连接");
 
                                 using (Stream stream = await response.Content.ReadAsStreamAsync())
                                 using (var reader = new StreamReader(stream, Encoding.UTF8))
@@ -441,7 +445,7 @@ namespace AIChat.Services
                                         {
                                             if (dataLines.Count > 0)
                                             {
-                                                HandleQwenSseEvent(string.Join("\n", dataLines), player);
+                                                HandleQwenSseEvent(string.Join("\n", dataLines), player, logger, label);
                                                 dataLines.Clear();
                                             }
                                             continue;
@@ -452,27 +456,31 @@ namespace AIChat.Services
                                     }
 
                                     if (dataLines.Count > 0)
-                                        HandleQwenSseEvent(string.Join("\n", dataLines), player);
+                                        HandleQwenSseEvent(string.Join("\n", dataLines), player, logger, label);
                                 }
                             }
                         }
                     }
 
+                    logger.LogInfo($"[{label}] 流式请求结束");
                     player.MarkCompleted();
                 }
                 catch (OperationCanceledException)
                 {
+                    string label = string.IsNullOrWhiteSpace(requestLabel) ? "Qwen-TTS" : requestLabel;
+                    logger.LogInfo($"[{label}] 流式请求被取消");
                     player.MarkCompleted();
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning($"[Qwen-TTS] 流式请求失败：{ex.Message}");
+                    string label = string.IsNullOrWhiteSpace(requestLabel) ? "Qwen-TTS" : requestLabel;
+                    logger.LogWarning($"[{label}] 流式请求失败：{ex.Message}");
                     player.MarkError(ex.Message);
                 }
             }, cancellationToken);
         }
 
-        private static void HandleQwenSseEvent(string jsonPayload, StreamingAudioPlayer player)
+        private static void HandleQwenSseEvent(string jsonPayload, StreamingAudioPlayer player, ManualLogSource logger, string label)
         {
             string eventType = ResponseParser.ExtractJsonValue(jsonPayload, "type");
             if (string.Equals(eventType, "chunk", StringComparison.OrdinalIgnoreCase))
@@ -485,6 +493,8 @@ namespace AIChat.Services
                 if (!AudioUtils.TryDecodeWavToFloat(wavBytes, out float[] samples, out int sampleRate, out int channels))
                     throw new InvalidDataException("failed to decode qwen-tts wav chunk");
 
+                if (!player.Initialized)
+                    logger.LogInfo($"[{label}] 收到首个 chunk");
                 player.SetFormat(sampleRate, channels);
                 player.AppendSamples(samples);
                 return;
@@ -497,7 +507,10 @@ namespace AIChat.Services
             }
 
             if (string.Equals(eventType, "done", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInfo($"[{label}] 收到 done");
                 player.MarkCompleted();
+            }
         }
 
         public static IEnumerator TTSHealthLoop(

@@ -142,6 +142,7 @@ namespace ChillAIMod
         private bool _isAISpeaking = false;
         private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
+        private const float QwenPrefetchedSentenceStartBufferSeconds = 0.8f;
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
         private const float QwenStreamPlaybackLeadSeconds = 0.08f;
 
@@ -1821,9 +1822,11 @@ namespace ChillAIMod
                         session.Player,
                         Logger,
                         session.Cancellation.Token,
-                        audioPathCheck);
+                        audioPathCheck,
+                        $"Qwen-TTS #{i + 1}/{sentences.Count}");
 
                     sessions.Add(session);
+                    Log.Info($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句已启动生成");
 
                     while (!session.Player.Completed
                         && string.IsNullOrEmpty(session.Player.ErrorMessage))
@@ -1835,6 +1838,8 @@ namespace ChillAIMod
                         }
                         yield return null;
                     }
+
+                    Log.Info($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句生成循环结束：completed={session.Player.Completed}, error={session.Player.ErrorMessage ?? "null"}");
                 }
             }
             finally
@@ -1848,6 +1853,10 @@ namespace ChillAIMod
             bool shouldSwitchEmotion,
             UnityEngine.UI.Text myText)
         {
+            float requiredBufferSeconds = session.Index <= 0
+                ? QwenStreamStartBufferSeconds
+                : QwenPrefetchedSentenceStartBufferSeconds;
+
             while (!session.Player.Initialized && string.IsNullOrEmpty(session.Player.ErrorMessage) && !session.Player.Completed)
             {
                 if (_isInterrupted)
@@ -1857,7 +1866,7 @@ namespace ChillAIMod
                 }
                 if (myText != null)
                 {
-                    myText.text = $"正在流式生成语音... 缓冲 {session.Player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
+                    myText.text = $"正在流式生成语音... 缓冲 {session.Player.BufferedSeconds:F2}/{requiredBufferSeconds:F1}s";
                     BringOverlayToFront(myText);
                 }
                 yield return null;
@@ -1876,7 +1885,7 @@ namespace ChillAIMod
                 yield break;
             }
 
-            while (session.Player.BufferedSeconds < QwenStreamStartBufferSeconds
+            while (session.Player.BufferedSeconds < requiredBufferSeconds
                 && !session.Player.Completed
                 && string.IsNullOrEmpty(session.Player.ErrorMessage))
             {
@@ -1887,7 +1896,7 @@ namespace ChillAIMod
                 }
                 if (myText != null)
                 {
-                    myText.text = $"正在缓冲语音... {session.Player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
+                    myText.text = $"正在缓冲语音... {session.Player.BufferedSeconds:F2}/{requiredBufferSeconds:F1}s";
                     BringOverlayToFront(myText);
                 }
                 yield return null;
@@ -1906,7 +1915,7 @@ namespace ChillAIMod
                 yield break;
             }
 
-            if (session.Player.Completed && session.Player.BufferedSeconds < QwenStreamStartBufferSeconds)
+            if (session.Player.Completed && session.Player.BufferedSeconds < requiredBufferSeconds)
             {
                 Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句短句长度 {session.Player.BufferedSeconds:F2}s，直接按完整短句播放");
             }
@@ -1947,6 +1956,7 @@ namespace ChillAIMod
             float playbackTailSeconds = GetQwenPlaybackTailSeconds(session.Player.SampleRate);
             double scheduledEndDspTime = -1d;
             bool talkingStarted = false;
+            Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句计划开始播放，buffer={session.Player.BufferedSeconds:F2}s");
 
             while (!_isInterrupted)
             {
@@ -1954,6 +1964,7 @@ namespace ChillAIMod
                 {
                     SetTalkingState(true);
                     talkingStarted = true;
+                    Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句实际进入播放");
                 }
 
                 if (session.Player.Completed)
@@ -1976,6 +1987,7 @@ namespace ChillAIMod
                 yield return null;
             }
 
+            Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句播放结束");
             StopCurrentAudioPlayback();
         }
 
