@@ -1957,33 +1957,26 @@ namespace ChillAIMod
             _audioSource.Play();
             SetTalkingState(true);
 
-            bool completionReached = false;
-            float completionReachedTime = 0f;
+            float playStartTime = Time.unscaledTime;
             float playbackTailSeconds = GetQwenPlaybackTailSeconds(session.Player.SampleRate);
+            float scheduledEndTime = -1f;
 
             while (!_isInterrupted)
             {
                 if (session.Player.Completed)
                 {
                     long appendedSamples = session.Player.TotalAppendedSamples;
-                    long consumedSamples = session.Player.TotalConsumedSamples;
-                    bool playbackCaughtUp = consumedSamples >= appendedSamples && appendedSamples > 0;
+                    if (appendedSamples > 0 && session.Player.SampleRate > 0 && session.Player.Channels > 0)
+                    {
+                        float totalDurationSeconds = appendedSamples / (float)(session.Player.SampleRate * session.Player.Channels);
+                        if (scheduledEndTime < 0f)
+                        {
+                            scheduledEndTime = playStartTime + totalDurationSeconds + playbackTailSeconds;
+                            Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句预计播放时长 {totalDurationSeconds:F2}s，计划结束时间窗口 {scheduledEndTime - playStartTime:F2}s");
+                        }
 
-                    if (playbackCaughtUp)
-                    {
-                        if (!completionReached)
-                        {
-                            completionReached = true;
-                            completionReachedTime = Time.unscaledTime;
-                        }
-                        else if (Time.unscaledTime - completionReachedTime >= playbackTailSeconds)
-                        {
+                        if (Time.unscaledTime >= scheduledEndTime)
                             break;
-                        }
-                    }
-                    else
-                    {
-                        completionReached = false;
                     }
                 }
 
