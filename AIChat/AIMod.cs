@@ -138,6 +138,7 @@ namespace ChillAIMod
        
         private bool _isAISpeaking = false;
         private CancellationTokenSource _qwenStreamCancellation;
+        private const float QwenStreamStartBufferSeconds = 2.5f;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -1792,7 +1793,7 @@ namespace ChillAIMod
                 }
                 if (myText != null)
                 {
-                    myText.text = "正在流式生成语音...";
+                    myText.text = $"正在流式生成语音... 缓冲 {player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
                     BringOverlayToFront(myText);
                 }
                 yield return null;
@@ -1811,8 +1812,20 @@ namespace ChillAIMod
                 yield break;
             }
 
-            while (player.BufferedSeconds < 0.12f && !player.Completed && string.IsNullOrEmpty(player.ErrorMessage))
+            while (player.BufferedSeconds < QwenStreamStartBufferSeconds && !player.Completed && string.IsNullOrEmpty(player.ErrorMessage))
+            {
+                if (_isInterrupted)
+                {
+                    _qwenStreamCancellation.Cancel();
+                    yield break;
+                }
+                if (myText != null)
+                {
+                    myText.text = $"正在缓冲语音... {player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
+                    BringOverlayToFront(myText);
+                }
                 yield return null;
+            }
 
             AudioClip streamClip = AudioClip.Create(
                 "QwenTtsStream",
