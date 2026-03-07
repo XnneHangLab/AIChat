@@ -905,16 +905,6 @@ namespace ChillAIMod
                     }
                     
                     GUILayout.Space(5);
-                    
-                    GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                    infoStyle.wordWrap = true;
-                    Color prevC = GUI.color;
-                    GUI.color = new Color(1f, 0.9f, 0.7f);
-                    GUILayout.Label("⚠️ 此功能正在开发中（下一个 PR 实现）", infoStyle);
-                    GUILayout.Label("功能说明：利用无状态大模型 + 简单 System Prompt 预测用户回复，生成\"小天使\"与\"小恶魔\"两个风格的预选回复供用户选择。", infoStyle);
-                    GUI.color = prevC;
-                    
-                    GUILayout.Space(5);
                     GUILayout.Label("预测对话 System Prompt：");
                     _predictPromptConfig.Value = GUILayout.TextArea(
                         _predictPromptConfig.Value,
