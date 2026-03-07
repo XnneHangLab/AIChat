@@ -68,7 +68,8 @@ namespace ChillAIMod
         private ConfigEntry<bool> _disablePersonaWhenUsingChatServer;
 
         // --- 新增：预测对话配置 ---
-        private ConfigEntry<string> _predictPromptConfig;
+        private ConfigEntry<string> _predictAngelPromptConfig;
+        private ConfigEntry<string> _predictDevilPromptConfig;
         private ConfigEntry<bool> _enablePredictReply;
 
         // --- 新增：各配置区域展开状态 ---
@@ -264,9 +265,12 @@ namespace ChillAIMod
                 "使用 XnneHangLab Chat Server 时禁用人设提示词（Chat Server 自行管理 System Prompt）");
 
             // --- 新增：预测对话配置 ---
-            _predictPromptConfig = Config.Bind("7. Predict", "Predict_Prompt",
-                "You are a helpful assistant that predicts user replies. Generate two different responses: one kind and supportive (小天使), one mischievous and playful (小恶魔).",
-                "预测对话 System Prompt");
+            _predictAngelPromptConfig = Config.Bind("7. Predict", "Predict_Angel_Prompt",
+                "You predict the user's next message. Output exactly one short, natural user-style sentence in a kind and supportive tone. No explanation, no JSON, no prefix.",
+                "小天使预测 System Prompt");
+            _predictDevilPromptConfig = Config.Bind("7. Predict", "Predict_Devil_Prompt",
+                "You predict the user's next message. Output exactly one short, natural user-style sentence in a playful and teasing tone. No explanation, no JSON, no prefix.",
+                "小恶魔预测 System Prompt");
             
             _enablePredictReply = Config.Bind("7. Predict", "Enable_Predict_Reply", false,
                 "启用自动预测回复（AI 回复后自动生成预选回复，复用 LLM 配置）");
@@ -905,10 +909,17 @@ namespace ChillAIMod
                     }
                     
                     GUILayout.Space(5);
-                    GUILayout.Label("预测对话 System Prompt：");
-                    _predictPromptConfig.Value = GUILayout.TextArea(
-                        _predictPromptConfig.Value,
-                        GUILayout.Height(elementHeight * 4),
+                    GUILayout.Label("小天使预测 System Prompt：");
+                    _predictAngelPromptConfig.Value = GUILayout.TextArea(
+                        _predictAngelPromptConfig.Value,
+                        GUILayout.Height(elementHeight * 3),
+                        GUILayout.MinWidth(50f));
+
+                    GUILayout.Space(5);
+                    GUILayout.Label("小恶魔预测 System Prompt：");
+                    _predictDevilPromptConfig.Value = GUILayout.TextArea(
+                        _predictDevilPromptConfig.Value,
+                        GUILayout.Height(elementHeight * 3),
                         GUILayout.MinWidth(50f));
                     
                     GUILayout.Space(5);
@@ -2090,24 +2101,105 @@ namespace ChillAIMod
             StartCoroutine(ShowDebugLog("[预测] 开始生成预测..."));
             Log.Info("[预测回复] 开始生成预测...");
 
-            // 构建预测请求（复用 LLM 配置 + 上下文）
             string contextPrompt = BuildContextPrompt();
-            string fullUserPrompt = contextPrompt + "Based on this conversation, predict the user's next reply. Generate TWO different responses (JSON format):\n{\n  \"angel\": \"kind and supportive reply\",\n  \"devil\": \"mischievous and playful reply\"\n}\n\nLast AI response: " + aiLastResponse;
-            
+            string fullUserPrompt = BuildPredictUserPrompt(contextPrompt, aiLastResponse);
+
+            string angelReply = "";
+            string devilReply = "";
+            bool angelSuccess = false;
+            bool devilSuccess = false;
+
+            // 小天使：单独请求，单独提示词
+            yield return StartCoroutine(RequestPredictedReply(
+                "PredictAngel",
+                _predictAngelPromptConfig.Value,
+                fullUserPrompt,
+                (reply, ok) =>
+                {
+                    angelReply = reply;
+                    angelSuccess = ok;
+                }));
+
+            // 小恶魔：单独请求，单独提示词
+            yield return StartCoroutine(RequestPredictedReply(
+                "PredictDevil",
+                _predictDevilPromptConfig.Value,
+                fullUserPrompt,
+                (reply, ok) =>
+                {
+                    devilReply = reply;
+                    devilSuccess = ok;
+                }));
+
+            if (angelSuccess || devilSuccess)
+            {
+                _predictedAngelReply = angelReply;
+                _predictedDevilReply = devilReply;
+
+                if (_isAISpeaking)
+                {
+                    _pendingPredictResult = true;
+                    StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angelReply.Length}字 / {devilReply.Length}字，等待 TTS 完成后显示"));
+                    Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
+                }
+                else
+                {
+                    _showPredictedReplies = true;
+                    StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angelReply.Length}字 / {devilReply.Length}字"));
+                    Log.Info("[预测回复] 预测完成并显示");
+                }
+            }
+            else
+            {
+                StartCoroutine(ShowDebugLog("[预测] 两次请求都失败，未显示预选回复"));
+            }
+
+            _isPredicting = false;
+        }
+
+        /// <summary>
+        /// 构建预测请求 UserPrompt（两次请求复用同一上下文）
+        /// </summary>
+        private string BuildPredictUserPrompt(string contextPrompt, string aiLastResponse)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (!string.IsNullOrEmpty(contextPrompt))
+            {
+                sb.Append(contextPrompt);
+                if (!contextPrompt.EndsWith("\n"))
+                    sb.AppendLine();
+            }
+
+            sb.AppendLine("Task: Predict the user's next message as ONE short chat sentence.");
+            sb.AppendLine("Reply with sentence only. No JSON, no label, no explanation.");
+            sb.AppendLine("Last AI response:");
+            sb.AppendLine(aiLastResponse ?? "");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 单次预测请求：返回提取后的纯文本 content
+        /// </summary>
+        private IEnumerator RequestPredictedReply(
+            string logHeader,
+            string systemPrompt,
+            string userPrompt,
+            Action<string, bool> onComplete)
+        {
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = _chatApiUrlConfig.Value,
                 ApiKey = _apiKeyConfig.Value,
                 ModelName = _modelConfig.Value,
-                SystemPrompt = _predictPromptConfig.Value,
-                UserPrompt = fullUserPrompt,
+                SystemPrompt = systemPrompt,
+                UserPrompt = userPrompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = false,
                 UseXnneHangLabChatServer = false,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = ThinkMode.Default,
                 HierarchicalMemory = null,
-                LogHeader = "PredictReply",
+                LogHeader = logHeader,
                 FixApiPathForThinkMode = false,
                 EnableTranslation = false,
                 DeepLXUrl = "",
@@ -2126,194 +2218,65 @@ namespace ChillAIMod
                 },
                 (errorMsg, responseCode) =>
                 {
-                    StartCoroutine(ShowDebugLog($"[预测] API 错误：{errorMsg}"));
-                    Log.Warning($"[预测回复] API 错误：{errorMsg} (Code: {responseCode})");
+                    StartCoroutine(ShowDebugLog($"[预测] {logHeader} API 错误：{errorMsg}"));
+                    Log.Warning($"[预测回复] {logHeader} API 错误：{errorMsg} (Code: {responseCode})");
                     success = false;
                 }
             );
 
-            if (success && !string.IsNullOrEmpty(rawResponse))
+            if (!success || string.IsNullOrEmpty(rawResponse))
             {
-                // 先从 OpenAI 格式响应中提取 content 字段
-                string content = ExtractContentFromResponse(rawResponse);
-                StartCoroutine(ShowDebugLog($"[预测] 提取 content: {content.Length}字"));
-                
-                // 解析 angel/devil
-                var (angel, devil) = ParsePredictedReplies(content);
-                
-                if (!string.IsNullOrEmpty(angel) || !string.IsNullOrEmpty(devil))
-                {
-                    _predictedAngelReply = angel;
-                    _predictedDevilReply = devil;
-                    
-                    if (_isAISpeaking)
-                    {
-                        _pendingPredictResult = true;
-                        StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angel.Length}字 / {devil.Length}字，等待 TTS 完成后显示"));
-                        Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
-                    }
-                    else
-                    {
-                        _showPredictedReplies = true;
-                        StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angel.Length}字 / {devil.Length}字"));
-                        Log.Info("[预测回复] 预测完成并显示");
-                    }
-                }
+                onComplete?.Invoke("", false);
+                yield break;
             }
 
-            _isPredicting = false;
+            string content = ExtractPredictContent(rawResponse);
+            if (string.IsNullOrEmpty(content))
+            {
+                onComplete?.Invoke("", false);
+                yield break;
+            }
+
+            StartCoroutine(ShowDebugLog($"[预测] {logHeader} 提取 content: {content.Length}字"));
+            onComplete?.Invoke(content, true);
         }
 
         /// <summary>
-        /// 从 OpenAI 格式响应中提取 content 字段
-        /// 示例输入：{"choices":[{"message":{"content":"{\\n  \\"angel\\": \\"...\\",\\n  \\"devil\\": \\"...\\",\\n}"}}]}
-        /// 示例输出：{\n  "angel": "...",\n  "devil": "...",\n}
+        /// 从模型响应里提取预测文本（只取 content/reply/message）
         /// </summary>
-        private string ExtractContentFromResponse(string openaiResponse)
+        private string ExtractPredictContent(string rawResponse)
         {
-            // 查找 "content" 关键字
-            int contentKeyIdx = openaiResponse.IndexOf("\"content\"");
-            if (contentKeyIdx < 0)
-            {
-                Log.Warning("[提取 Content] 未找到 content 字段");
-                return openaiResponse;
-            }
-            
-            // 找到 content: 后面的第一个引号
-            int colonIdx = openaiResponse.IndexOf(":", contentKeyIdx);
-            if (colonIdx < 0)
-            {
-                Log.Warning("[提取 Content] 未找到冒号");
-                return openaiResponse;
-            }
-            
-            // 跳过冒号后的空格和引号
-            int contentStart = colonIdx + 1;
-            while (contentStart < openaiResponse.Length && 
-                   (openaiResponse[contentStart] == ' ' || openaiResponse[contentStart] == '"'))
-            {
-                contentStart++;
-            }
-            
-            // 从 contentStart 开始，找到最后一个 } 之前的位置
-            // 因为 content 的内容是一个完整的 JSON 对象 {...}
-            int braceCount = 0;
-            int contentEnd = contentStart;
-            bool foundFirstBrace = false;
-            
-            for (int i = contentStart; i < openaiResponse.Length; i++)
-            {
-                char c = openaiResponse[i];
-                if (c == '{')
-                {
-                    braceCount++;
-                    foundFirstBrace = true;
-                }
-                else if (c == '}')
-                {
-                    braceCount--;
-                    if (foundFirstBrace && braceCount == 0)
-                    {
-                        contentEnd = i + 1;
-                        break;
-                    }
-                }
-            }
-            
-            if (contentEnd <= contentStart)
-            {
-                Log.Warning($"[提取 Content] 未找到完整内容 (start={contentStart}, end={contentEnd})");
-                return openaiResponse;
-            }
-            
-            string content = openaiResponse.Substring(contentStart, contentEnd - contentStart);
-            
-            // 处理转义：将 \n 转为换行，\" 转为引号
-            content = content.Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\\\", "\\");
-            
-            Log.Info($"[提取 Content] 成功，长度={content.Length}");
+            if (string.IsNullOrEmpty(rawResponse))
+                return "";
+
+            string content = ResponseParser.ExtractJsonValue(rawResponse, "content");
+            if (string.IsNullOrEmpty(content))
+                content = ResponseParser.ExtractJsonValue(rawResponse, "reply");
+            if (string.IsNullOrEmpty(content))
+                content = ResponseParser.ExtractJsonValue(rawResponse, "message");
+            if (string.IsNullOrEmpty(content))
+                content = rawResponse;
+
+            content = content.Replace("\r", " ").Replace("\n", " ").Trim();
+            content = content.Trim('"', '\'', ' ', '\t');
+            content = StripPredictLabelPrefix(content, "小天使");
+            content = StripPredictLabelPrefix(content, "小恶魔");
+            content = StripPredictLabelPrefix(content, "小惡魔");
+            content = StripPredictLabelPrefix(content, "angel");
+            content = StripPredictLabelPrefix(content, "devil");
+            return content.Trim();
+        }
+
+        private string StripPredictLabelPrefix(string content, string label)
+        {
+            if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(label))
+                return content;
+
+            if (content.StartsWith(label + "：", StringComparison.OrdinalIgnoreCase))
+                return content.Substring(label.Length + 1).Trim();
+            if (content.StartsWith(label + ":", StringComparison.OrdinalIgnoreCase))
+                return content.Substring(label.Length + 1).Trim();
             return content;
-        }
-
-        /// <summary>
-        /// 解析预测回复的 JSON 响应
-        /// </summary>
-        private (string angel, string devil) ParsePredictedReplies(string jsonResponse)
-        {
-            try
-            {
-                jsonResponse = jsonResponse.Trim();
-                string angel = "";
-                string devil = "";
-                
-                int angelIdx = jsonResponse.IndexOf("\"angel\"");
-                if (angelIdx >= 0)
-                {
-                    int colonIdx = jsonResponse.IndexOf(":", angelIdx);
-                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
-                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
-                    if (quoteStart > 0 && quoteEnd > quoteStart)
-                    {
-                        angel = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
-                    }
-                }
-                
-                int devilIdx = jsonResponse.IndexOf("\"devil\"");
-                if (devilIdx >= 0)
-                {
-                    int colonIdx = jsonResponse.IndexOf(":", devilIdx);
-                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
-                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
-                    if (quoteStart > 0 && quoteEnd > quoteStart)
-                    {
-                        devil = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
-                    }
-                }
-                
-                if (string.IsNullOrEmpty(angel) && string.IsNullOrEmpty(devil))
-                {
-                    if (jsonResponse.Contains("小天使") && jsonResponse.Contains("小恶魔"))
-                    {
-                        string[] parts = jsonResponse.Split(new string[] { "小恶魔" }, System.StringSplitOptions.None);
-                        if (parts.Length >= 2)
-                        {
-                            angel = parts[0].Replace("小天使", "").Trim(':', '：', ' ');
-                            devil = parts[1].Trim(':', '：', ' ');
-                        }
-                    }
-                }
-                
-                // 清理 JSON 残留符号
-                angel = CleanJsonArtifacts(angel);
-                devil = CleanJsonArtifacts(devil);
-                
-                return (angel, devil);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning($"[预测回复] JSON 解析失败：{ex.Message}");
-                return ("", "");
-            }
-        }
-
-        /// <summary>
-        /// 清理 JSON 残留符号（{, }, "", : 等）
-        /// </summary>
-        private string CleanJsonArtifacts(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            
-            // 移除开头和结尾的 JSON 符号
-            text = text.TrimStart('{', ' ', '\n', '\t', '"');
-            text = text.TrimEnd('}', ' ', '\n', '\t', '"');
-            
-            // 移除开头的 ": " 或 "": "
-            while (text.StartsWith("\":") || text.StartsWith("\": \""))
-            {
-                text = text.TrimStart(':', ' ', '"');
-            }
-            
-            return text.Trim();
         }
 
         /// <summary>
