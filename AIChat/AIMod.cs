@@ -131,6 +131,9 @@ namespace ChillAIMod
         private bool _isInterrupted = false;
         // 当前 AIProcessRoutine 协程引用（用于中断时 StopCoroutine）
         private Coroutine _aiProcessCoroutine;
+        private Dictionary<GameObject, bool> _activeUiStatusMap;
+        private GameObject _activeOverlayTextObj;
+        private GameObject _activeOriginalTextObj;
 
 
 
@@ -1032,9 +1035,8 @@ namespace ChillAIMod
             // 如果需要发送消息，在渲染 TextArea 之前拦截事件
             if (shouldSendMessage)
             {
+                InterruptCurrentProcess(false);
                 _isInterrupted = false;
-                CancelAllQwenStreams();
-                StopCurrentAudioPlayback();
                 _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                 _playerInput = "";
                 keyEvent.Use(); // 消费事件，防止 TextArea 处理
@@ -1108,16 +1110,7 @@ namespace ChillAIMod
                 GUI.backgroundColor = new Color(0.85f, 0.2f, 0.2f); // 红色
                 if (GUILayout.Button("⛔ 中断", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
                 {
-                    _isInterrupted = true;
-                    CancelAllQwenStreams();
-                    StopCurrentAudioPlayback();
-                    // fire-and-forget：通知 memory server 中断
-                    StartCoroutine(PostInterruptSignal());
-                    // 中断时清除预测状态
-                    _showPredictedReplies = false;
-                    _pendingPredictResult = false;
-                    _predictedAngelReply = "";
-                    _predictedDevilReply = "";
+                    InterruptCurrentProcess(true);
                 }
                 GUI.backgroundColor = Color.white;
             }
@@ -1127,9 +1120,8 @@ namespace ChillAIMod
                 {
                     if (!string.IsNullOrEmpty(_playerInput))
                     {
+                        InterruptCurrentProcess(false);
                         _isInterrupted = false;
-                        CancelAllQwenStreams();
-                        StopCurrentAudioPlayback();
                         _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                         _playerInput = "";
                     }
@@ -1238,6 +1230,7 @@ namespace ChillAIMod
             originalTextObj.SetActive(false);
             GameObject myTextObj = UIHelper.CreateOverlayText(parentObj);
             Text myText = myTextObj.GetComponent<Text>();
+            TrackActiveUiState(uiStatusMap, myTextObj, originalTextObj);
             BringOverlayToFront(myText);
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
@@ -1326,9 +1319,10 @@ namespace ChillAIMod
                 yield return new WaitForSecondsRealtime(3.0f);
 
                 // 手动执行清理工作，恢复游戏原本状态
-                UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+                CleanupActiveUiState();
                 _isInterrupted = false;
                 _isProcessing = false;
+                _aiProcessCoroutine = null;
                 yield break;
             }
 
@@ -1458,9 +1452,10 @@ namespace ChillAIMod
             }
             
             // 6. 清理
-            UIHelper.RestoreUiStatus(uiStatusMap, myTextObj, originalTextObj);
+            CleanupActiveUiState();
             _isInterrupted = false;
             _isProcessing = false;
+            _aiProcessCoroutine = null;
         }
 
 
@@ -1829,7 +1824,8 @@ namespace ChillAIMod
 
                     sessions.Add(session);
 
-                    while (session.StreamTask != null && !session.StreamTask.IsCompleted)
+                    while (!session.Player.Completed
+                        && string.IsNullOrEmpty(session.Player.ErrorMessage))
                     {
                         if (_isInterrupted)
                         {
@@ -2429,6 +2425,9 @@ namespace ChillAIMod
             }
             CancelAllQwenStreams();
             StopCurrentAudioPlayback();
+            CleanupActiveUiState();
+            _isProcessing = false;
+            _aiProcessCoroutine = null;
         }
 
         // ================= 【中断 & URL 辅助方法】 =================
@@ -2524,6 +2523,51 @@ namespace ChillAIMod
             }
             GameBridge.RestoreLookAt();
             SetTalkingState(false);
+        }
+
+        private void TrackActiveUiState(
+            Dictionary<GameObject, bool> uiStatusMap,
+            GameObject overlayTextObj,
+            GameObject originalTextObj)
+        {
+            _activeUiStatusMap = uiStatusMap;
+            _activeOverlayTextObj = overlayTextObj;
+            _activeOriginalTextObj = originalTextObj;
+        }
+
+        private void CleanupActiveUiState()
+        {
+            if (_activeUiStatusMap == null && _activeOverlayTextObj == null && _activeOriginalTextObj == null)
+                return;
+
+            UIHelper.RestoreUiStatus(_activeUiStatusMap, _activeOverlayTextObj, _activeOriginalTextObj);
+            _activeUiStatusMap = null;
+            _activeOverlayTextObj = null;
+            _activeOriginalTextObj = null;
+        }
+
+        private void InterruptCurrentProcess(bool notifyBackend)
+        {
+            _isInterrupted = true;
+            CancelAllQwenStreams();
+            StopCurrentAudioPlayback();
+
+            if (_aiProcessCoroutine != null)
+            {
+                StopCoroutine(_aiProcessCoroutine);
+                _aiProcessCoroutine = null;
+            }
+
+            CleanupActiveUiState();
+            _isProcessing = false;
+
+            _showPredictedReplies = false;
+            _pendingPredictResult = false;
+            _predictedAngelReply = "";
+            _predictedDevilReply = "";
+
+            if (notifyBackend)
+                StartCoroutine(PostInterruptSignal());
         }
 
         private float GetQwenPlaybackTailSeconds(int sampleRate)
