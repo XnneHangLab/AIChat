@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Reflection;
 using System.IO;
 using System.Threading.Tasks;
@@ -10,7 +9,6 @@ using BepInEx.Configuration;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
-using System.Diagnostics;
 using AIChat.Core;
 using AIChat.Services;
 using AIChat.Unity;
@@ -36,11 +34,7 @@ namespace ChillAIMod
         private ConfigEntry<string> _personaConfig;
         private ConfigEntry<string> _chatApiUrlConfig;
 
-        private ConfigEntry<string> _TTSServicePathConfig;
-        private ConfigEntry<bool> _LaunchTTSServiceConfig;
-        private ConfigEntry<bool> _quitTTSServiceOnQuitConfig;
         private ConfigEntry<bool> _audioPathCheckConfig;
-        private ConfigEntry<bool> _japaneseCheckConfig;
 
         // --- 新增窗口大小配置 ---
         private ConfigEntry<float> _windowWidthConfig;
@@ -115,7 +109,6 @@ namespace ChillAIMod
         private bool _isProcessing = false;
         private bool _isResizing = false; // 新增：拖拽调整大小状态
 
-        private Process _launchedTTSProcess;
         private bool _isTTSServiceReady = false;
         private Coroutine _ttsHealthCheckCoroutine;
 
@@ -205,15 +198,11 @@ namespace ChillAIMod
 
             // --- TTS 配置 ---
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
-            _TTSServicePathConfig = Config.Bind("2. TTS", "TTS_Service_Script_Path", @"D:\GPT-SoVITS\GPT-SoVITS-v2pro-20250604-nvidia50\run_api.bat", "TTS 服务脚本文件路径");
-            _LaunchTTSServiceConfig = Config.Bind("2. TTS", "LaunchTTSService", true, "启动时自动运行 TTS 服务");
-            _quitTTSServiceOnQuitConfig = Config.Bind("2. TTS", "QuitTTSServiceOnQuit", true, "退出时自动关闭 TTS 服务");
             _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
             _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", false, "从 Mod 侧检测音频文件路径");
             _promptTextConfig = Config.Bind("2. TTS", "Audio_File_Text", "君が集中した時のシータ波を検出して、リンクをつなぎ直せば元通りになるはず。", "音频文件台词");
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
             _targetLangConfig = Config.Bind("2. TTS", "TargetLang", "ja", "合成语音语言 (text_lang)");
-            _japaneseCheckConfig = Config.Bind("2. TTS", "JapaneseCheck", true, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）");
             _voiceVolumeConfig = Config.Bind("2. TTS", "VoiceVolume", 1.0f, "语音音量 (0.0 - 1.0)");
 
             // --- 界面配置 ---
@@ -291,24 +280,6 @@ namespace ChillAIMod
             _tempWidthString = _windowWidthConfig.Value.ToString("F0");
             _tempHeightString = _windowHeightConfig.Value.ToString("F0");
             _tempVolumeString = _voiceVolumeConfig.Value.ToString("F2");
-            string cleanPath = _TTSServicePathConfig.Value.Replace("\"", "").Trim();
-            if (_LaunchTTSServiceConfig.Value && File.Exists(_TTSServicePathConfig.Value))
-            {
-                try
-                {
-                    ProcessStartInfo startInfo = new ProcessStartInfo(cleanPath)
-                    {
-                        UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(cleanPath)
-                    };
-                    _launchedTTSProcess = Process.Start(startInfo);
-                    Log.Info("已启动 TTS 服务");
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"启动 TTS 服务失败: {ex.Message}");
-                }
-            }
             // 启动后台 TTS 健康检测
             if (_ttsHealthCheckCoroutine == null)
             {
@@ -644,12 +615,6 @@ namespace ChillAIMod
                     GUILayout.Label("TTS 服务 URL：");
                     _sovitsUrlConfig.Value = GUILayout.TextField(_sovitsUrlConfig.Value);
 
-                    GUILayout.Label("TTS 服务脚本文件路径：");
-                    _TTSServicePathConfig.Value = GUILayout.TextField(_TTSServicePathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-
-                    GUILayout.Space(5);
-                    _LaunchTTSServiceConfig.Value = GUILayout.Toggle(_LaunchTTSServiceConfig.Value, "启动时自动运行 TTS 服务", GUILayout.Height(elementHeight));
-                    _quitTTSServiceOnQuitConfig.Value = GUILayout.Toggle(_quitTTSServiceOnQuitConfig.Value, "退出时自动关闭 TTS 服务", GUILayout.Height(elementHeight));
                     GUILayout.Label("GSV 访问音频文件的路径（可以是相对路径）：");
                     // 路径通常很长，必须加 MinWidth(50f)
                     _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -666,10 +631,7 @@ namespace ChillAIMod
                     
                     GUILayout.Label("合成语音语言 (text_lang):");
                     _targetLangConfig.Value = GUILayout.TextField(_targetLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    
-                    GUILayout.Space(5);
-                    _japaneseCheckConfig.Value = GUILayout.Toggle(_japaneseCheckConfig.Value, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）", GUILayout.Height(elementHeight));
-                    
+
                     GUILayout.Space(5);
 
                     GUILayout.Label($"语音音量：{_voiceVolumeConfig.Value:F2}");
@@ -1359,13 +1321,8 @@ namespace ChillAIMod
                 AddToMemorySystem("User", prompt);
                 AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
-                // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
-                // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
-                // 这是一个可选的保险措施
-                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true;
-                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
-
-                if (!string.IsNullOrEmpty(voiceText) && isJapanese)
+                // 仅在 voiceText 非空时请求 TTS，不再按日文内容做拦截
+                if (!string.IsNullOrEmpty(voiceText))
                 {
                     myText.text = "message is sending through cyber space";
                     
@@ -1435,9 +1392,8 @@ namespace ChillAIMod
                 else
                 {
                     // 【静音模式】
-                    // 如果格式错了，或者不是日语，我们就只显示字幕、做动作，不发声音
-                    // 这样比听到 AI 用奇怪的调子读中文要好得多
-                    Log.Warning("跳过 TTS：文本为空或非日语");
+                    // 如果格式错了或文本为空，我们就只显示字幕、做动作，不发声音
+                    Log.Warning("跳过 TTS：文本为空");
 
                     myText.text = subtitleText;
                     myText.color = Color.white;
@@ -1949,18 +1905,6 @@ namespace ChillAIMod
             {
                 StopCoroutine(_deeplxHealthCheckCoroutine);
                 _deeplxHealthCheckCoroutine = null;
-            }
-            if (_quitTTSServiceOnQuitConfig.Value && _launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
-            {   
-                try
-                {
-                    ProcessHelper.KillProcessTree(_launchedTTSProcess);
-                    Log.Info("TTS 服务已关闭");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning($"关闭 TTS 服务时出错: {ex.Message}");
-                }
             }
         }
 
