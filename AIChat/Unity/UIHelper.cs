@@ -42,12 +42,14 @@ namespace AIChat.Unity
         {
             GameObject go = new GameObject(">>> AI_TEXT <<<");
             go.transform.SetParent(parent.transform, false);
+            go.transform.SetAsLastSibling(); // 保证初次创建时位于同层最上方
             RectTransform rt = go.AddComponent<RectTransform>();
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.sizeDelta = Vector2.zero;
             Text txt = go.AddComponent<Text>();
             txt.fontSize = 26;
             txt.alignment = TextAnchor.UpperCenter;
             txt.horizontalOverflow = HorizontalWrapMode.Wrap;
+            txt.raycastTarget = false;
             Font f = Resources.GetBuiltinResource<Font>("Arial.ttf");
             if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (f != null) txt.font = f;

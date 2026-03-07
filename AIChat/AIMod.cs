@@ -1188,6 +1188,12 @@ namespace ChillAIMod
             }
         }
 
+        private void BringOverlayToFront(Text text)
+        {
+            if (text == null || text.transform == null) return;
+            text.transform.SetAsLastSibling();
+        }
+
         IEnumerator AIProcessRoutine(string prompt)
         {
             _isProcessing = true;
@@ -1204,6 +1210,7 @@ namespace ChillAIMod
             originalTextObj.SetActive(false);
             GameObject myTextObj = UIHelper.CreateOverlayText(parentObj);
             Text myText = myTextObj.GetComponent<Text>();
+            BringOverlayToFront(myText);
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
@@ -1284,6 +1291,7 @@ namespace ChillAIMod
                 if (errCode == 404) errMsg += "\n(模型名称或 URL 错误)";
 
                 myText.text = errMsg;
+                BringOverlayToFront(myText);
                 myText.color = Color.red;
 
                 // 让错误信息在屏幕上停留 3 秒，让玩家看清楚
@@ -1311,6 +1319,7 @@ namespace ChillAIMod
                 if (!string.IsNullOrEmpty(voiceText))
                 {
                     myText.text = "message is sending through cyber space";
+                    BringOverlayToFront(myText);
                     
                     // 【关键判断】仅在 TTS 服务就绪时启用流式断句播放
                     if (_isTTSServiceReady)
@@ -1361,6 +1370,7 @@ namespace ChillAIMod
                             // 【应用换行】在将字幕文本显示到 UI 之前，强制插入换行符
                             subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
                             myText.text = subtitleText;
+                            BringOverlayToFront(myText);
                             myText.color = Color.white;
 
                             // 正常播放
@@ -1369,9 +1379,11 @@ namespace ChillAIMod
                         else
                         {
                             myText.text = "Voice Failed (TTS Error)";
+                            BringOverlayToFront(myText);
                             // 语音失败时，至少做个动作显示字幕
                             subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
                             myText.text = subtitleText;
+                            BringOverlayToFront(myText);
                             yield return StartCoroutine(PlayNativeAnimation(emotionTag, null)); // 传 null 进去
                         }
                     }
@@ -1383,6 +1395,7 @@ namespace ChillAIMod
                     Log.Warning("跳过 TTS：文本为空");
 
                     myText.text = subtitleText;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
 
                     // 修改 PlayNativeAnimation 支持无音频模式 (见下方)
@@ -1562,6 +1575,7 @@ namespace ChillAIMod
                         yield break;
                     }
                     myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Count})";
+                    BringOverlayToFront(myText);
                     yield return null;
                 }
                 
@@ -1579,6 +1593,7 @@ namespace ChillAIMod
                     
                     // 显示字幕（逐句）
                     myText.text = subtitle;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
                     
                     if (shouldSwitchEmotion)
@@ -1596,6 +1611,7 @@ namespace ChillAIMod
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
                     myText.text = subtitle;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
                     if (shouldSwitchEmotion)
                         yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
@@ -2085,6 +2101,7 @@ namespace ChillAIMod
             // 创建临时字幕
             GameObject debugTextObj = UIHelper.CreateOverlayText(parentObj);
             Text debugText = debugTextObj.GetComponent<Text>();
+            BringOverlayToFront(debugText);
             
             // 显示日志
             debugText.text = message;
