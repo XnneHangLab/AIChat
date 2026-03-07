@@ -1035,6 +1035,7 @@ namespace ChillAIMod
             {
                 _isInterrupted = false;
                 CancelAllQwenStreams();
+                StopCurrentAudioPlayback();
                 _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                 _playerInput = "";
                 keyEvent.Use(); // 消费事件，防止 TextArea 处理
@@ -1110,6 +1111,7 @@ namespace ChillAIMod
                 {
                     _isInterrupted = true;
                     CancelAllQwenStreams();
+                    StopCurrentAudioPlayback();
                     // fire-and-forget：通知 memory server 中断
                     StartCoroutine(PostInterruptSignal());
                     // 中断时清除预测状态
@@ -1127,6 +1129,8 @@ namespace ChillAIMod
                     if (!string.IsNullOrEmpty(_playerInput))
                     {
                         _isInterrupted = false;
+                        CancelAllQwenStreams();
+                        StopCurrentAudioPlayback();
                         _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                         _playerInput = "";
                     }
@@ -1955,6 +1959,7 @@ namespace ChillAIMod
 
             bool completionReached = false;
             float completionReachedTime = 0f;
+            float playbackTailSeconds = GetQwenPlaybackTailSeconds(session.Player.SampleRate);
 
             while (!_isInterrupted)
             {
@@ -1971,7 +1976,7 @@ namespace ChillAIMod
                             completionReached = true;
                             completionReachedTime = Time.unscaledTime;
                         }
-                        else if (Time.unscaledTime - completionReachedTime >= QwenStreamPlaybackTailSeconds)
+                        else if (Time.unscaledTime - completionReachedTime >= playbackTailSeconds)
                         {
                             break;
                         }
@@ -1985,12 +1990,7 @@ namespace ChillAIMod
                 yield return null;
             }
 
-            if (_audioSource != null && _audioSource.isPlaying)
-                _audioSource.Stop();
-            _audioSource.clip = null;
-
-            GameBridge.RestoreLookAt();
-            SetTalkingState(false);
+            StopCurrentAudioPlayback();
         }
 
         IEnumerator BeginEmotionAnimation(string emotion)
@@ -2444,6 +2444,7 @@ namespace ChillAIMod
                 _deeplxHealthCheckCoroutine = null;
             }
             CancelAllQwenStreams();
+            StopCurrentAudioPlayback();
         }
 
         // ================= 【中断 & URL 辅助方法】 =================
@@ -2527,6 +2528,28 @@ namespace ChillAIMod
                 catch { }
             }
             _activeQwenStreamCancellations.Clear();
+        }
+
+        private void StopCurrentAudioPlayback()
+        {
+            if (_audioSource != null)
+            {
+                if (_audioSource.isPlaying)
+                    _audioSource.Stop();
+                _audioSource.clip = null;
+            }
+            GameBridge.RestoreLookAt();
+            SetTalkingState(false);
+        }
+
+        private float GetQwenPlaybackTailSeconds(int sampleRate)
+        {
+            if (sampleRate <= 0)
+                return QwenStreamPlaybackTailSeconds;
+
+            AudioSettings.GetDSPBufferSize(out int bufferLength, out int numBuffers);
+            float dspBufferedSeconds = (bufferLength * Mathf.Max(1, numBuffers)) / (float)sampleRate;
+            return Mathf.Max(QwenStreamPlaybackTailSeconds, dspBufferedSeconds + 0.08f);
         }
 
         private void SetTalkingState(bool speaking)
