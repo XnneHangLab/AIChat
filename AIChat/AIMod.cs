@@ -345,25 +345,6 @@ namespace ChillAIMod
             // 自动连接游戏核心
             if (GameBridge._heroineService == null && Time.frameCount % 100 == 0) GameBridge.FindHeroineService();
 
-            // 口型同步逻辑
-            if (_isAISpeaking && GameBridge._cachedAnimator != null && _audioSource != null)
-            {
-                bool shouldTalk = _audioSource.isPlaying;
-
-                // 只有状态改变时才调用，优化性能
-                if (GameBridge._cachedAnimator.GetBool("Enable_Talk") != shouldTalk)
-                {
-                    GameBridge._cachedAnimator.SetBool("Enable_Talk", shouldTalk);
-                }
-
-                // 语音播完，立即归还控制权
-                if (!shouldTalk)
-                {
-                    _isAISpeaking = false;
-                    GameBridge._cachedAnimator.SetBool("Enable_Talk", false);
-                }
-            }
-
             // 检查并添加AI聊天按钮
             if (!_aiChatButtonAdded && Time.frameCount % 300 == 0) // 每5秒检查一次，避免频繁查找
             {
@@ -1965,12 +1946,12 @@ namespace ChillAIMod
                 yield break;
 
             _audioSource.clip = voiceClip;
-            _isAISpeaking = true;
 
             if (shouldSwitchEmotion)
                 yield return StartCoroutine(BeginEmotionAnimation(session.EmotionTag));
 
             _audioSource.Play();
+            SetTalkingState(true);
 
             bool completionReached = false;
             float completionReachedTime = 0f;
@@ -2009,7 +1990,7 @@ namespace ChillAIMod
             _audioSource.clip = null;
 
             GameBridge.RestoreLookAt();
-            _isAISpeaking = false;
+            SetTalkingState(false);
         }
 
         IEnumerator BeginEmotionAnimation(string emotion)
@@ -2254,9 +2235,9 @@ namespace ChillAIMod
             }
 
             float clipDuration = voiceClip.length;
-            _isAISpeaking = true;
             _audioSource.clip = voiceClip;
             _audioSource.Play();
+            SetTalkingState(true);
 
             // 保持和 PlayNativeAnimation 一致的播放缓冲。
             yield return new WaitForSecondsRealtime(clipDuration + 0.5f);
@@ -2266,7 +2247,7 @@ namespace ChillAIMod
                 Log.Warning("等待结束，强制停止语音播放");
                 _audioSource.Stop();
             }
-            _isAISpeaking = false;
+            SetTalkingState(false);
 
             HandlePendingPredictResultAfterTTS();
         }
@@ -2296,14 +2277,15 @@ namespace ChillAIMod
             {
                 // 2. 播放语音 + 动作
                 Log.Info($">>> 语音({voiceClip.length:F1}s) + 动作");
-                _isAISpeaking = true;
                 _audioSource.clip = voiceClip;
                 _audioSource.Play();
+                SetTalkingState(true);
             }
             else
             {
                 Log.Info($">>> 无语音模式 (格式错误或TTS失败) + 动作");
                 // 没声音就不播了，只做动作
+                SetTalkingState(false);
             }
             int animID = 1001;
 
@@ -2342,7 +2324,7 @@ namespace ChillAIMod
                     GameBridge.CallNativeChangeAnim(250);
                     GameBridge.RestoreLookAt();
 
-                    _isAISpeaking = false;
+                    SetTalkingState(false);
                     yield break; // 退出
             }
 
@@ -2359,7 +2341,7 @@ namespace ChillAIMod
                 _audioSource.Stop();
             }
             GameBridge.RestoreLookAt();
-            _isAISpeaking = false;
+            SetTalkingState(false);
 
             HandlePendingPredictResultAfterTTS();
         }
@@ -2545,6 +2527,20 @@ namespace ChillAIMod
                 catch { }
             }
             _activeQwenStreamCancellations.Clear();
+        }
+
+        private void SetTalkingState(bool speaking)
+        {
+            _isAISpeaking = speaking;
+            if (GameBridge._cachedAnimator != null)
+            {
+                try
+                {
+                    if (GameBridge._cachedAnimator.GetBool("Enable_Talk") != speaking)
+                        GameBridge._cachedAnimator.SetBool("Enable_Talk", speaking);
+                }
+                catch { }
+            }
         }
 
         /// <summary>
