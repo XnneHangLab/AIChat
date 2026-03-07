@@ -121,6 +121,35 @@ namespace AIChat.Utils
             // 2) 标准 ||| 格式
             // [Emotion] ||| Subtitle
             // [Emotion] ||| Subtitle ||| Voice
+            // 优先处理多段 [Emotion] ||| ...，避免被 parts.Length == 3 误判。
+            var earlyTagMatches = System.Text.RegularExpressions.Regex.Matches(
+                response,
+                @"\[(?<emotion>[^\]\r\n]+)\]\s*\|\|\|\s*",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+            if (earlyTagMatches.Count >= 2)
+            {
+                ret.EmotionTag = earlyTagMatches[0].Groups["emotion"].Value.Trim();
+                var chunks = new List<string>();
+                for (int i = 0; i < earlyTagMatches.Count; i++)
+                {
+                    int start = earlyTagMatches[i].Index + earlyTagMatches[i].Length;
+                    int end = (i + 1 < earlyTagMatches.Count) ? earlyTagMatches[i + 1].Index : response.Length;
+                    int len = end - start;
+                    if (len <= 0) continue;
+                    string chunk = response.Substring(start, len).Trim();
+                    if (!string.IsNullOrEmpty(chunk)) chunks.Add(chunk);
+                }
+                if (chunks.Count > 0)
+                {
+                    string mergedText = string.Join("\n\n", chunks);
+                    ret.SubtitleText = mergedText;
+                    ret.VoiceText = mergedText;
+                    ret.Success = true;
+                    Log.Info($"[解析] 多情绪分段解析成功（{chunks.Count} 段）");
+                    return ret;
+                }
+            }
+
             string[] parts = response.Split(new string[] { "|||" }, StringSplitOptions.None);
 
             if (parts.Length == 2)
