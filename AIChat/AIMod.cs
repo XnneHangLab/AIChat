@@ -140,7 +140,6 @@ namespace ChillAIMod
         private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
-        private const int QwenStreamPrefetchWindow = 2;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -1778,13 +1777,6 @@ namespace ChillAIMod
                     if (_isInterrupted)
                         break;
 
-                    while (GetInFlightQwenSessionCount(sessions) >= QwenStreamPrefetchWindow)
-                    {
-                        if (_isInterrupted)
-                            yield break;
-                        yield return null;
-                    }
-
                     string emotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
                     string subtitle = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);
                     if (string.IsNullOrWhiteSpace(subtitle))
@@ -1836,23 +1828,22 @@ namespace ChillAIMod
                         audioPathCheck);
 
                     sessions.Add(session);
+
+                    while (session.StreamTask != null && !session.StreamTask.IsCompleted)
+                    {
+                        if (_isInterrupted)
+                        {
+                            session.Cancellation?.Cancel();
+                            yield break;
+                        }
+                        yield return null;
+                    }
                 }
             }
             finally
             {
                 onCompleted?.Invoke();
             }
-        }
-
-        int GetInFlightQwenSessionCount(List<QwenStreamingSentenceSession> sessions)
-        {
-            int count = 0;
-            for (int i = 0; i < sessions.Count; i++)
-            {
-                if (sessions[i].StreamTask != null && !sessions[i].StreamTask.IsCompleted)
-                    count++;
-            }
-            return count;
         }
 
         IEnumerator PlayQwenSessionWhenReady(
