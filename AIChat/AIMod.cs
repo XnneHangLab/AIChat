@@ -3,6 +3,7 @@ using System.Collections;
 using System.Text;
 using System.Reflection;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Configuration;
@@ -30,6 +31,8 @@ namespace ChillAIMod
         private ConfigEntry<string> _promptTextConfig;
         private ConfigEntry<string> _promptLangConfig;
         private ConfigEntry<string> _targetLangConfig;
+        private ConfigEntry<bool> _useGptSovitsTtsConfig;
+        private ConfigEntry<bool> _useFasterQwenTtsConfig;
         private ConfigEntry<string> _personaConfig;
         private ConfigEntry<string> _chatApiUrlConfig;
 
@@ -134,6 +137,7 @@ namespace ChillAIMod
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
+        private CancellationTokenSource _qwenStreamCancellation;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -212,12 +216,15 @@ namespace ChillAIMod
 
             // --- TTS 配置 ---
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
+            _useGptSovitsTtsConfig = Config.Bind("2. TTS", "Use_GPT_SoVITS", true, "使用 GPT-SoVITS 作为 TTS 提供方");
+            _useFasterQwenTtsConfig = Config.Bind("2. TTS", "Use_Faster_Qwen_TTS", false, "使用 faster-qwen-tts 作为 TTS 提供方");
             _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
             _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", false, "从 Mod 侧检测音频文件路径");
             _promptTextConfig = Config.Bind("2. TTS", "Audio_File_Text", "君が集中した時のシータ波を検出して、リンクをつなぎ直せば元通りになるはず。", "音频文件台词");
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
             _targetLangConfig = Config.Bind("2. TTS", "TargetLang", "ja", "合成语音语言 (text_lang)");
             _voiceVolumeConfig = Config.Bind("2. TTS", "VoiceVolume", 1.0f, "语音音量 (0.0 - 1.0)");
+            NormalizeTtsProviderSelection();
 
             // --- 界面配置 ---
             // 我们希望窗口宽度是屏幕的 1/3，高度是屏幕的 1/3 (或者你喜欢的比例)
@@ -595,8 +602,27 @@ namespace ChillAIMod
                 if (_showTtsSettings)
                 {
                     GUILayout.Space(5);
-                    GUILayout.Label("TTS 服务 URL：");
+                    GUILayout.Label("TTS 基础 URL：");
                     _sovitsUrlConfig.Value = GUILayout.TextField(_sovitsUrlConfig.Value);
+
+                    bool useGptSovits = GUILayout.Toggle(_useGptSovitsTtsConfig.Value, "使用 gpt-sovits", GUILayout.Height(elementHeight));
+                    bool useFasterQwenTts = GUILayout.Toggle(_useFasterQwenTtsConfig.Value, "使用 faster-qwen-tts", GUILayout.Height(elementHeight));
+                    ApplyTtsProviderToggleState(useGptSovits, useFasterQwenTts);
+
+                    GUIStyle ttsEndpointStyle = new GUIStyle(GUI.skin.label);
+                    ttsEndpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                    Color prevTtsColor = GUI.color;
+                    GUI.color = new Color(0.7f, 0.9f, 1f);
+                    GUILayout.Label($"  gsv:   {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
+                    GUILayout.Label($"  qwen:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
+                    GUI.color = prevTtsColor;
+
+                    if (_useXnneHangLabChatServer.Value)
+                    {
+                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                        infoStyle.wordWrap = true;
+                        GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管，基础 URL 会自动改用 Server 根地址。", infoStyle);
+                    }
 
                     GUILayout.Label("GSV 访问音频文件的路径（可以是相对路径）：");
                     // 路径通常很长，必须加 MinWidth(50f)
@@ -813,6 +839,8 @@ namespace ChillAIMod
                         GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
                         GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
                         GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
+                        GUILayout.Label($"  gsv:       {{base}}/tts/gptsovitsv2", endpointStyle);
+                        GUILayout.Label($"  qwen-tts:  {{base}}/tts/qwen-tts/generate/stream", endpointStyle);
                         GUI.color = prevC;
                         
                         GUILayout.Space(5);
@@ -1331,7 +1359,7 @@ namespace ChillAIMod
                             voiceText,
                             subtitleText,
                             emotionTag,
-                            _sovitsUrlConfig.Value,
+                            GetTtsBaseUrl(),
                             _targetLangConfig.Value,
                             _refAudioPathConfig.Value,
                             _promptTextConfig.Value,
@@ -1349,18 +1377,34 @@ namespace ChillAIMod
                         // 传统模式：TTS 未就绪，完整文本一次性生成
                         Log.Info("[TTS] 服务未就绪，使用传统完整文本模式");
                         AudioClip downloadedClip = null;
-                        yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                            _sovitsUrlConfig.Value + "/tts",
-                            voiceText,
-                            _targetLangConfig.Value,
-                            _refAudioPathConfig.Value,
-                            _promptTextConfig.Value,
-                            _promptLangConfig.Value,
-                            Logger,
-                            (clip) => downloadedClip = clip,
-                            3,
-                            30f,
-                            _audioPathCheckConfig.Value));
+                        if (GetCurrentTtsProvider() == TTSClient.Provider.FasterQwenTts)
+                        {
+                            yield return StartCoroutine(TTSClient.DownloadQwenVoiceWithRetry(
+                                GetTtsBaseUrl(),
+                                voiceText,
+                                _refAudioPathConfig.Value,
+                                _promptTextConfig.Value,
+                                Logger,
+                                (clip) => downloadedClip = clip,
+                                3,
+                                30f,
+                                _audioPathCheckConfig.Value));
+                        }
+                        else
+                        {
+                            yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
+                                TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl()),
+                                voiceText,
+                                _targetLangConfig.Value,
+                                _refAudioPathConfig.Value,
+                                _promptTextConfig.Value,
+                                _promptLangConfig.Value,
+                                Logger,
+                                (clip) => downloadedClip = clip,
+                                3,
+                                30f,
+                                _audioPathCheckConfig.Value));
+                        }
 
                         if (downloadedClip != null)
                         {
@@ -1525,6 +1569,22 @@ namespace ChillAIMod
             }
 
             Log.Info($"[流式 TTS] 断句完成，共 {sentences.Count} 句");
+
+            if (GetCurrentTtsProvider() == TTSClient.Provider.FasterQwenTts)
+            {
+                yield return StartCoroutine(PlayStreamingQwenTTS(
+                    sentences,
+                    ttsBaseUrl,
+                    refAudioPath,
+                    promptText,
+                    audioPathCheck,
+                    myText,
+                    enableTranslation,
+                    deeplxUrl,
+                    sourceLang,
+                    translateTargetLang));
+                yield break;
+            }
             
             // 2. 队列管理
             Queue<AudioClip> audioQueue = new Queue<AudioClip>();
@@ -1623,6 +1683,236 @@ namespace ChillAIMod
             
             HandlePendingPredictResultAfterTTS();
             Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
+        }
+
+        IEnumerator PlayStreamingQwenTTS(
+            List<StreamingSentenceTask> sentences,
+            string ttsBaseUrl,
+            string refAudioPath,
+            string promptText,
+            bool audioPathCheck,
+            UnityEngine.UI.Text myText,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang)
+        {
+            string lastPlayedEmotion = null;
+
+            for (int i = 0; i < sentences.Count; i++)
+            {
+                if (_isInterrupted)
+                {
+                    Log.Info($"[Qwen-TTS] 收到中断信号，停止播放（已完成 {i}/{sentences.Count} 句）");
+                    break;
+                }
+
+                string sentenceEmotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
+                string originalText = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);
+                if (string.IsNullOrWhiteSpace(originalText))
+                    originalText = sentences[i].SubtitleText.Trim();
+
+                string ttsText = originalText;
+                if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))
+                {
+                    string translatedText = null;
+                    yield return StartCoroutine(DeepLXTranslate(
+                        deeplxUrl,
+                        originalText,
+                        sourceLang,
+                        translateTargetLang,
+                        Logger,
+                        (result) => translatedText = result
+                    ));
+
+                    if (!string.IsNullOrEmpty(translatedText))
+                    {
+                        ttsText = translatedText;
+                        Log.Info($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译成功：{originalText} → {ttsText}");
+                    }
+                    else
+                    {
+                        Log.Warning($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译失败，使用原文兜底");
+                    }
+                }
+
+                bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
+                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
+
+                yield return StartCoroutine(PlaySingleSentenceQwenStream(
+                    ttsBaseUrl,
+                    ttsText,
+                    originalText,
+                    sentenceEmotion,
+                    shouldSwitchEmotion,
+                    myText,
+                    refAudioPath,
+                    promptText,
+                    audioPathCheck));
+
+                lastPlayedEmotion = sentenceEmotion;
+            }
+
+            HandlePendingPredictResultAfterTTS();
+            Log.Info(_isInterrupted ? "[Qwen-TTS] 已中断" : "[Qwen-TTS] 播放完成");
+        }
+
+        IEnumerator PlaySingleSentenceQwenStream(
+            string ttsBaseUrl,
+            string ttsText,
+            string originalSubtitle,
+            string sentenceEmotion,
+            bool shouldSwitchEmotion,
+            UnityEngine.UI.Text myText,
+            string refAudioPath,
+            string promptText,
+            bool audioPathCheck)
+        {
+            var player = new TTSClient.StreamingAudioPlayer();
+            _qwenStreamCancellation?.Cancel();
+            _qwenStreamCancellation?.Dispose();
+            _qwenStreamCancellation = new CancellationTokenSource();
+
+            Task streamTask = TTSClient.StreamQwenTtsAsync(
+                ttsBaseUrl,
+                ttsText,
+                refAudioPath,
+                promptText,
+                player,
+                Logger,
+                _qwenStreamCancellation.Token,
+                audioPathCheck);
+
+            while (!player.Initialized && string.IsNullOrEmpty(player.ErrorMessage) && !player.Completed)
+            {
+                if (_isInterrupted)
+                {
+                    _qwenStreamCancellation.Cancel();
+                    yield break;
+                }
+                if (myText != null)
+                {
+                    myText.text = "正在流式生成语音...";
+                    BringOverlayToFront(myText);
+                }
+                yield return null;
+            }
+
+            if (!string.IsNullOrEmpty(player.ErrorMessage) || !player.Initialized)
+            {
+                Log.Warning($"[Qwen-TTS] 流式句子启动失败：{player.ErrorMessage ?? "未收到任何音频块"}");
+                if (myText != null)
+                {
+                    myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                    BringOverlayToFront(myText);
+                    myText.color = Color.white;
+                }
+                yield return StartCoroutine(PlayEmotionOnly(sentenceEmotion, shouldSwitchEmotion));
+                yield break;
+            }
+
+            while (player.BufferedSeconds < 0.12f && !player.Completed && string.IsNullOrEmpty(player.ErrorMessage))
+                yield return null;
+
+            AudioClip streamClip = AudioClip.Create(
+                "QwenTtsStream",
+                player.SampleRate * 120,
+                player.Channels,
+                player.SampleRate,
+                true,
+                player.Read);
+
+            if (myText != null)
+            {
+                myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                BringOverlayToFront(myText);
+                myText.color = Color.white;
+            }
+
+            yield return StartCoroutine(PlayStreamingClipWithEmotion(streamClip, player, sentenceEmotion, shouldSwitchEmotion));
+
+            while (!streamTask.IsCompleted)
+                yield return null;
+        }
+
+        IEnumerator PlayStreamingClipWithEmotion(
+            AudioClip voiceClip,
+            TTSClient.StreamingAudioPlayer player,
+            string emotion,
+            bool shouldSwitchEmotion)
+        {
+            if (voiceClip == null)
+                yield break;
+
+            _audioSource.clip = voiceClip;
+            _isAISpeaking = true;
+
+            if (shouldSwitchEmotion)
+                yield return StartCoroutine(BeginEmotionAnimation(emotion));
+
+            _audioSource.Play();
+
+            while (!_isInterrupted)
+            {
+                if (!string.IsNullOrEmpty(player.ErrorMessage))
+                    break;
+
+                bool queueEmpty = player.BufferedSamples <= 0;
+                if (player.Completed && queueEmpty)
+                    break;
+
+                yield return null;
+            }
+
+            if (_audioSource != null && _audioSource.isPlaying)
+                _audioSource.Stop();
+
+            GameBridge.RestoreLookAt();
+            _isAISpeaking = false;
+        }
+
+        IEnumerator BeginEmotionAnimation(string emotion)
+        {
+            if (GameBridge._heroineService == null || GameBridge._changeAnimSmoothMethod == null)
+                yield break;
+
+            if (emotion != "Drink")
+            {
+                GameBridge.CallNativeChangeAnim(250);
+                yield return new WaitForSecondsRealtime(0.2f);
+            }
+
+            int animID = 1001;
+            switch (emotion)
+            {
+                case "Happy": animID = 1001; break;
+                case "Sad": animID = 1002; break;
+                case "Fun": animID = 1003; break;
+                case "Confused": animID = 1302; break;
+                case "Agree": animID = 1301; break;
+                case "Drink":
+                    GameBridge.CallNativeChangeAnim(250);
+                    yield return new WaitForSecondsRealtime(0.5f);
+                    animID = 256;
+                    break;
+                case "Think": animID = 252; break;
+                case "Wave":
+                    animID = 5001;
+                    GameBridge.CallNativeChangeAnim(animID);
+                    yield return new WaitForSecondsRealtime(0.3f);
+                    GameBridge.ControlLookAt(1.0f, 0.5f);
+                    yield break;
+            }
+
+            GameBridge.CallNativeChangeAnim(animID);
+        }
+
+        IEnumerator PlayEmotionOnly(string emotion, bool shouldSwitchEmotion)
+        {
+            if (shouldSwitchEmotion)
+                yield return StartCoroutine(BeginEmotionAnimation(emotion));
+            else
+                yield return new WaitForSecondsRealtime(0.1f);
         }
 
         /// <summary>
@@ -1767,7 +2057,8 @@ namespace ChillAIMod
         {
             // 委托给 TTSClient 的双向心跳实现
             yield return StartCoroutine(TTSClient.TTSHealthLoop(
-                () => _sovitsUrlConfig.Value,
+                () => GetTtsBaseUrl(),
+                () => GetCurrentTtsProvider(),
                 Logger,
                 (ready) => { _isTTSServiceReady = ready; }
             ));
@@ -2029,6 +2320,9 @@ namespace ChillAIMod
                 StopCoroutine(_deeplxHealthCheckCoroutine);
                 _deeplxHealthCheckCoroutine = null;
             }
+            _qwenStreamCancellation?.Cancel();
+            _qwenStreamCancellation?.Dispose();
+            _qwenStreamCancellation = null;
         }
 
         // ================= 【中断 & URL 辅助方法】 =================
@@ -2041,6 +2335,50 @@ namespace ChillAIMod
             if (_useXnneHangLabChatServer.Value)
                 return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/translate/deeplx";
             return _deeplxUrlConfig.Value;
+        }
+
+        private string GetTtsBaseUrl()
+        {
+            if (_useXnneHangLabChatServer.Value)
+                return _xnneHangLabChatBaseUrl.Value;
+            return _sovitsUrlConfig.Value;
+        }
+
+        private TTSClient.Provider GetCurrentTtsProvider()
+        {
+            NormalizeTtsProviderSelection();
+            return TTSClient.GetProvider(_useGptSovitsTtsConfig.Value, _useFasterQwenTtsConfig.Value);
+        }
+
+        private void NormalizeTtsProviderSelection()
+        {
+            if (_useGptSovitsTtsConfig == null || _useFasterQwenTtsConfig == null)
+                return;
+
+            if (_useGptSovitsTtsConfig.Value == _useFasterQwenTtsConfig.Value)
+            {
+                _useGptSovitsTtsConfig.Value = true;
+                _useFasterQwenTtsConfig.Value = false;
+            }
+        }
+
+        private void ApplyTtsProviderToggleState(bool useGptSovits, bool useFasterQwenTts)
+        {
+            if (useGptSovits == useFasterQwenTts)
+            {
+                if (useGptSovits && !_useGptSovitsTtsConfig.Value)
+                    useFasterQwenTts = false;
+                else if (useFasterQwenTts && !_useFasterQwenTtsConfig.Value)
+                    useGptSovits = false;
+                else
+                {
+                    useGptSovits = true;
+                    useFasterQwenTts = false;
+                }
+            }
+
+            _useGptSovitsTtsConfig.Value = useGptSovits;
+            _useFasterQwenTtsConfig.Value = useFasterQwenTts;
         }
 
         /// <summary>

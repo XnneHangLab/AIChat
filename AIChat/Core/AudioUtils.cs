@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 
 namespace AIChat.Core
@@ -20,75 +17,164 @@ namespace AIChat.Core
             return newClip;
         }
 
-        // ================= 【新增 WAV 编码工具】 =================
         public static byte[] EncodeToWAV(AudioClip clip)
         {
             using (MemoryStream stream = new MemoryStream())
             {
-                // 1. 获取数据
                 float[] samples = new float[clip.samples * clip.channels];
                 clip.GetData(samples, 0);
 
-                // 2. 写入 WAV 头 (44 bytes)
                 int hz = clip.frequency;
                 int channels = clip.channels;
                 int samplesCount = samples.Length;
 
-                Byte[] riff = Encoding.UTF8.GetBytes("RIFF");
+                byte[] riff = Encoding.UTF8.GetBytes("RIFF");
                 stream.Write(riff, 0, 4);
 
-                Byte[] chunkSize = BitConverter.GetBytes(samplesCount * 2 + 36);
+                byte[] chunkSize = BitConverter.GetBytes(samplesCount * 2 + 36);
                 stream.Write(chunkSize, 0, 4);
 
-                Byte[] wave = Encoding.UTF8.GetBytes("WAVE");
+                byte[] wave = Encoding.UTF8.GetBytes("WAVE");
                 stream.Write(wave, 0, 4);
 
-                Byte[] fmt = Encoding.UTF8.GetBytes("fmt ");
+                byte[] fmt = Encoding.UTF8.GetBytes("fmt ");
                 stream.Write(fmt, 0, 4);
 
-                Byte[] subChunk1 = BitConverter.GetBytes(16);
+                byte[] subChunk1 = BitConverter.GetBytes(16);
                 stream.Write(subChunk1, 0, 4);
 
-                UInt16 one = 1;
-                Byte[] audioFormat = BitConverter.GetBytes(one);
+                ushort one = 1;
+                byte[] audioFormat = BitConverter.GetBytes(one);
                 stream.Write(audioFormat, 0, 2);
 
-                Byte[] numChannels = BitConverter.GetBytes(channels);
+                byte[] numChannels = BitConverter.GetBytes(channels);
                 stream.Write(numChannels, 0, 2);
 
-                Byte[] sampleRate = BitConverter.GetBytes(hz);
+                byte[] sampleRate = BitConverter.GetBytes(hz);
                 stream.Write(sampleRate, 0, 4);
 
-                Byte[] byteRate = BitConverter.GetBytes(hz * channels * 2);
+                byte[] byteRate = BitConverter.GetBytes(hz * channels * 2);
                 stream.Write(byteRate, 0, 4);
 
-                UInt16 blockAlign = (ushort)(channels * 2);
+                ushort blockAlign = (ushort)(channels * 2);
                 stream.Write(BitConverter.GetBytes(blockAlign), 0, 2);
 
-                UInt16 bps = 16;
-                Byte[] bitsPerSample = BitConverter.GetBytes(bps);
+                ushort bps = 16;
+                byte[] bitsPerSample = BitConverter.GetBytes(bps);
                 stream.Write(bitsPerSample, 0, 2);
 
-                Byte[] datastring = Encoding.UTF8.GetBytes("data");
+                byte[] datastring = Encoding.UTF8.GetBytes("data");
                 stream.Write(datastring, 0, 4);
 
-                Byte[] subChunk2 = BitConverter.GetBytes(samplesCount * 2);
+                byte[] subChunk2 = BitConverter.GetBytes(samplesCount * 2);
                 stream.Write(subChunk2, 0, 4);
 
-                // 3. 写入数据 (将 float -1.0~1.0 转换为 short -32768~32767)
-                Int16[] intData = new Int16[samplesCount];
-                Byte[] bytesData = new Byte[samplesCount * 2];
+                short[] intData = new short[samplesCount];
+                byte[] bytesData = new byte[samplesCount * 2];
                 int rescaleFactor = 32767;
 
                 for (int i = 0; i < samplesCount; i++)
                 {
                     intData[i] = (short)(samples[i] * rescaleFactor);
-                    Byte[] byteArr = BitConverter.GetBytes(intData[i]);
+                    byte[] byteArr = BitConverter.GetBytes(intData[i]);
                     byteArr.CopyTo(bytesData, i * 2);
                 }
 
                 stream.Write(bytesData, 0, bytesData.Length);
                 return stream.ToArray();
+            }
+        }
+
+        public static bool TryDecodeWavToFloat(byte[] wavBytes, out float[] samples, out int sampleRate, out int channels)
+        {
+            samples = null;
+            sampleRate = 0;
+            channels = 0;
+
+            if (wavBytes == null || wavBytes.Length < 44)
+                return false;
+
+            try
+            {
+                using (var stream = new MemoryStream(wavBytes))
+                using (var reader = new BinaryReader(stream))
+                {
+                    string riff = new string(reader.ReadChars(4));
+                    if (riff != "RIFF")
+                        return false;
+
+                    reader.ReadInt32();
+                    string wave = new string(reader.ReadChars(4));
+                    if (wave != "WAVE")
+                        return false;
+
+                    ushort audioFormat = 1;
+                    ushort bitsPerSample = 16;
+                    byte[] dataChunk = null;
+
+                    while (reader.BaseStream.Position + 8 <= reader.BaseStream.Length)
+                    {
+                        string chunkId = new string(reader.ReadChars(4));
+                        int chunkSize = reader.ReadInt32();
+
+                        if (chunkSize < 0 || reader.BaseStream.Position + chunkSize > reader.BaseStream.Length)
+                            return false;
+
+                        if (chunkId == "fmt ")
+                        {
+                            audioFormat = reader.ReadUInt16();
+                            channels = reader.ReadUInt16();
+                            sampleRate = reader.ReadInt32();
+                            reader.ReadInt32();
+                            reader.ReadUInt16();
+                            bitsPerSample = reader.ReadUInt16();
+
+                            int remaining = chunkSize - 16;
+                            if (remaining > 0)
+                                reader.ReadBytes(remaining);
+                        }
+                        else if (chunkId == "data")
+                        {
+                            dataChunk = reader.ReadBytes(chunkSize);
+                        }
+                        else
+                        {
+                            reader.ReadBytes(chunkSize);
+                        }
+
+                        if ((chunkSize & 1) == 1 && reader.BaseStream.Position < reader.BaseStream.Length)
+                            reader.ReadByte();
+                    }
+
+                    if (dataChunk == null || sampleRate <= 0 || channels <= 0)
+                        return false;
+
+                    if (audioFormat == 3 && bitsPerSample == 32)
+                    {
+                        int count = dataChunk.Length / 4;
+                        samples = new float[count];
+                        Buffer.BlockCopy(dataChunk, 0, samples, 0, dataChunk.Length);
+                        return true;
+                    }
+
+                    if (audioFormat == 1 && bitsPerSample == 16)
+                    {
+                        int count = dataChunk.Length / 2;
+                        samples = new float[count];
+                        for (int i = 0; i < count; i++)
+                        {
+                            short value = BitConverter.ToInt16(dataChunk, i * 2);
+                            samples[i] = value / 32768f;
+                        }
+                        return true;
+                    }
+
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
             }
         }
     }

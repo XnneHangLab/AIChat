@@ -1,11 +1,13 @@
-using AIChat.Core;
+﻿using AIChat.Core;
 using BepInEx.Logging;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -14,6 +16,168 @@ namespace AIChat.Services
 {
     public static class TTSClient
     {
+        public enum Provider
+        {
+            GptSovits,
+            FasterQwenTts,
+        }
+
+        private static readonly HttpClient HttpClient = new HttpClient(new HttpClientHandler
+        {
+            UseCookies = false,
+            UseProxy = false,
+        });
+
+        public sealed class StreamingAudioPlayer
+        {
+            private readonly object _lock = new object();
+            private readonly Queue<float> _pcmQueue = new Queue<float>();
+
+            public int SampleRate { get; private set; }
+            public int Channels { get; private set; }
+            public bool Initialized { get; private set; }
+            public bool Completed { get; private set; }
+            public string ErrorMessage { get; private set; }
+
+            public int BufferedSamples
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _pcmQueue.Count;
+                    }
+                }
+            }
+
+            public float BufferedSeconds
+            {
+                get
+                {
+                    if (!Initialized || SampleRate <= 0 || Channels <= 0)
+                        return 0f;
+                    return BufferedSamples / (float)(SampleRate * Channels);
+                }
+            }
+
+            public void SetFormat(int sampleRate, int channels)
+            {
+                lock (_lock)
+                {
+                    if (!Initialized)
+                    {
+                        SampleRate = sampleRate;
+                        Channels = channels;
+                        Initialized = true;
+                        return;
+                    }
+
+                    if (SampleRate != sampleRate || Channels != channels)
+                        throw new InvalidOperationException("stream sample format changed unexpectedly");
+                }
+            }
+
+            public void AppendSamples(float[] samples)
+            {
+                if (samples == null || samples.Length == 0)
+                    return;
+
+                lock (_lock)
+                {
+                    for (int i = 0; i < samples.Length; i++)
+                        _pcmQueue.Enqueue(samples[i]);
+                }
+            }
+
+            public void Read(float[] output)
+            {
+                lock (_lock)
+                {
+                    int i = 0;
+                    while (i < output.Length && _pcmQueue.Count > 0)
+                    {
+                        output[i++] = _pcmQueue.Dequeue();
+                    }
+
+                    while (i < output.Length)
+                    {
+                        output[i++] = 0f;
+                    }
+                }
+            }
+
+            public void MarkCompleted()
+            {
+                Completed = true;
+            }
+
+            public void MarkError(string message)
+            {
+                ErrorMessage = message;
+                Completed = true;
+            }
+        }
+
+        public static Provider GetProvider(bool useGptSovits, bool useFasterQwenTts)
+        {
+            if (useFasterQwenTts && !useGptSovits)
+                return Provider.FasterQwenTts;
+            return Provider.GptSovits;
+        }
+
+        public static string GetGptSovitsEndpoint(string baseUrl)
+        {
+            return baseUrl.TrimEnd('/') + "/tts";
+        }
+
+        public static string NormalizeQwenTtsBase(string baseUrl)
+        {
+            string normalized = baseUrl.TrimEnd('/');
+            if (normalized.EndsWith("/tts/qwen-tts", StringComparison.OrdinalIgnoreCase))
+                return normalized;
+            return normalized + "/tts/qwen-tts";
+        }
+
+        public static string GetQwenTtsGenerateEndpoint(string baseUrl)
+        {
+            return NormalizeQwenTtsBase(baseUrl) + "/generate";
+        }
+
+        public static string GetQwenTtsStreamEndpoint(string baseUrl)
+        {
+            return NormalizeQwenTtsBase(baseUrl) + "/generate/stream";
+        }
+
+        public static string GetQwenTtsHealthEndpoint(string baseUrl)
+        {
+            return NormalizeQwenTtsBase(baseUrl) + "/health";
+        }
+
+        public static string ResolveReferenceAudioPath(string refPath, bool audioPathCheck)
+        {
+            if (string.IsNullOrWhiteSpace(refPath))
+                return refPath;
+
+            if (Path.IsPathRooted(refPath) && File.Exists(refPath))
+                return refPath;
+
+            if (File.Exists(refPath))
+                return Path.GetFullPath(refPath);
+
+            string pluginPath = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", Path.GetFileName(refPath));
+            if (File.Exists(pluginPath))
+                return pluginPath;
+
+            if (audioPathCheck)
+            {
+                string defaultPath = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", "Voice.wav");
+                if (File.Exists(defaultPath))
+                    return defaultPath;
+            }
+
+            return refPath;
+        }
+
         public static IEnumerator DownloadVoiceWithRetry(
             string url,
             string textToSpeak,
@@ -27,16 +191,12 @@ namespace AIChat.Services
             float timeoutSeconds = 30f,
             bool audioPathCheck = false)
         {
+            refPath = ResolveReferenceAudioPath(refPath, audioPathCheck);
             if (audioPathCheck && !File.Exists(refPath))
             {
-                string defaultPath = Path.Combine(BepInEx.Paths.PluginPath, "ChillAIMod", "Voice.wav");
-                if (File.Exists(defaultPath)) refPath = defaultPath;
-                else
-                {
-                    logger.LogError($"[TTS] 找不到参考音频: {refPath}");
-                    onComplete?.Invoke(null);
-                    yield break;
-                }
+                logger.LogError($"[TTS] 找不到参考音频: {refPath}");
+                onComplete?.Invoke(null);
+                yield break;
             }
 
             string jsonBody = "{ "
@@ -46,10 +206,9 @@ namespace AIChat.Services
                 + "\"prompt_text\": \"" + ResponseParser.EscapeJson(promptText) + "\", "
                 + "\"prompt_lang\": \"" + promptLang + "\" }";
 
-            logger.LogInfo($"[TTS] 完整请求信息:");
+            logger.LogInfo("[TTS] 完整请求信息:");
             logger.LogInfo($"[TTS]   URL: {url}");
             logger.LogInfo($"[TTS]   Request Body: {jsonBody}");
-            logger.LogInfo("[TTS] 开始生成语音...");
 
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
@@ -70,13 +229,13 @@ namespace AIChat.Services
                         var clip = DownloadHandlerAudioClip.GetContent(request);
                         if (clip != null)
                         {
-                            logger.LogInfo($"[TTS] 语音生成成功（第 {attempt} 次尝试）（耗时 {requestDuration:F2}s）");
+                            logger.LogInfo($"[TTS] 语音生成成功（第 {attempt} 次尝试，耗时 {requestDuration:F2}s）");
                             onComplete?.Invoke(clip);
                             yield break;
                         }
                     }
 
-                    logger.LogWarning($"[TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）: {request.error}");
+                    logger.LogWarning($"[TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）：{request.error}");
                     if (attempt < maxRetries)
                         yield return new WaitForSeconds(1f);
                 }
@@ -86,51 +245,226 @@ namespace AIChat.Services
             onComplete?.Invoke(null);
         }
 
-        /// <summary>
-        /// 双向 TTS 心跳循环：未连接时 5s 轮询，已连接后 30s 轮询。
-        /// 直接内联检测逻辑，避免每次 StartCoroutine 分配额外对象。
-        /// </summary>
+        public static IEnumerator DownloadQwenVoiceWithRetry(
+            string baseUrl,
+            string textToSpeak,
+            string refPath,
+            string promptText,
+            ManualLogSource logger,
+            Action<AudioClip> onComplete,
+            int maxRetries = 3,
+            float timeoutSeconds = 30f,
+            bool audioPathCheck = false)
+        {
+            string resolvedRefPath = ResolveReferenceAudioPath(refPath, audioPathCheck);
+            byte[] refAudioBytes = null;
+            string refAudioName = null;
+
+            if (!string.IsNullOrWhiteSpace(resolvedRefPath) && File.Exists(resolvedRefPath))
+            {
+                refAudioBytes = File.ReadAllBytes(resolvedRefPath);
+                refAudioName = Path.GetFileName(resolvedRefPath);
+            }
+
+            string url = GetQwenTtsGenerateEndpoint(baseUrl);
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                WWWForm form = new WWWForm();
+                form.AddField("text", textToSpeak ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(promptText))
+                    form.AddField("ref_text", promptText);
+                if (refAudioBytes != null)
+                    form.AddBinaryData("ref_audio", refAudioBytes, refAudioName ?? "ref.wav", "audio/wav");
+
+                using (UnityWebRequest request = UnityWebRequest.Post(url, form))
+                {
+                    request.downloadHandler = new DownloadHandlerAudioClip(url, AudioType.WAV);
+                    request.timeout = (int)timeoutSeconds;
+
+                    var requestStartTime = DateTime.UtcNow;
+                    yield return request.SendWebRequest();
+                    var requestDuration = (DateTime.UtcNow - requestStartTime).TotalSeconds;
+
+                    if (request.result == UnityWebRequest.Result.Success)
+                    {
+                        var clip = DownloadHandlerAudioClip.GetContent(request);
+                        if (clip != null)
+                        {
+                            logger.LogInfo($"[Qwen-TTS] 语音生成成功（第 {attempt} 次尝试，耗时 {requestDuration:F2}s）");
+                            onComplete?.Invoke(clip);
+                            yield break;
+                        }
+                    }
+
+                    logger.LogWarning($"[Qwen-TTS] 第 {attempt}/{maxRetries} 次尝试失败（耗时 {requestDuration:F2}s）：{request.error}");
+                    if (attempt < maxRetries)
+                        yield return new WaitForSeconds(1f);
+                }
+            }
+
+            logger.LogError("[Qwen-TTS] 所有重试均失败，放弃生成语音");
+            onComplete?.Invoke(null);
+        }
+
+        public static Task StreamQwenTtsAsync(
+            string baseUrl,
+            string textToSpeak,
+            string refPath,
+            string promptText,
+            StreamingAudioPlayer player,
+            ManualLogSource logger,
+            CancellationToken cancellationToken,
+            bool audioPathCheck = false)
+        {
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    string resolvedRefPath = ResolveReferenceAudioPath(refPath, audioPathCheck);
+                    using (var content = new MultipartFormDataContent())
+                    {
+                        content.Add(new StringContent(textToSpeak ?? string.Empty, Encoding.UTF8), "text");
+                        if (!string.IsNullOrWhiteSpace(promptText))
+                            content.Add(new StringContent(promptText, Encoding.UTF8), "ref_text");
+                        if (!string.IsNullOrWhiteSpace(resolvedRefPath) && File.Exists(resolvedRefPath))
+                        {
+                            var audioContent = new ByteArrayContent(File.ReadAllBytes(resolvedRefPath));
+                            audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+                            content.Add(audioContent, "ref_audio", Path.GetFileName(resolvedRefPath));
+                        }
+
+                        using (var request = new HttpRequestMessage(HttpMethod.Post, GetQwenTtsStreamEndpoint(baseUrl)))
+                        {
+                            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+                            request.Content = content;
+
+                            using (HttpResponseMessage response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+                            {
+                                response.EnsureSuccessStatusCode();
+
+                                using (Stream stream = await response.Content.ReadAsStreamAsync())
+                                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                                {
+                                    var dataLines = new List<string>();
+                                    while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+                                    {
+                                        string line = await reader.ReadLineAsync();
+                                        if (string.IsNullOrEmpty(line))
+                                        {
+                                            if (dataLines.Count > 0)
+                                            {
+                                                HandleQwenSseEvent(string.Join("\n", dataLines), player);
+                                                dataLines.Clear();
+                                            }
+                                            continue;
+                                        }
+
+                                        if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                                            dataLines.Add(line.Substring(5).TrimStart());
+                                    }
+
+                                    if (dataLines.Count > 0)
+                                        HandleQwenSseEvent(string.Join("\n", dataLines), player);
+                                }
+                            }
+                        }
+                    }
+
+                    player.MarkCompleted();
+                }
+                catch (OperationCanceledException)
+                {
+                    player.MarkCompleted();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning($"[Qwen-TTS] 流式请求失败：{ex.Message}");
+                    player.MarkError(ex.Message);
+                }
+            }, cancellationToken);
+        }
+
+        private static void HandleQwenSseEvent(string jsonPayload, StreamingAudioPlayer player)
+        {
+            string eventType = ResponseParser.ExtractJsonValue(jsonPayload, "type");
+            if (string.Equals(eventType, "chunk", StringComparison.OrdinalIgnoreCase))
+            {
+                string audioB64 = ResponseParser.ExtractJsonValue(jsonPayload, "audio_b64");
+                if (string.IsNullOrEmpty(audioB64))
+                    return;
+
+                byte[] wavBytes = Convert.FromBase64String(audioB64);
+                if (!AudioUtils.TryDecodeWavToFloat(wavBytes, out float[] samples, out int sampleRate, out int channels))
+                    throw new InvalidDataException("failed to decode qwen-tts wav chunk");
+
+                player.SetFormat(sampleRate, channels);
+                player.AppendSamples(samples);
+                return;
+            }
+
+            if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
+            {
+                string message = ResponseParser.ExtractJsonValue(jsonPayload, "message");
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(message) ? "unknown qwen-tts stream error" : message);
+            }
+
+            if (string.Equals(eventType, "done", StringComparison.OrdinalIgnoreCase))
+                player.MarkCompleted();
+        }
+
         public static IEnumerator TTSHealthLoop(
             Func<string> getBaseUrl,
+            Func<Provider> getProvider,
             ManualLogSource logger,
             Action<bool> onStateChanged)
         {
-            // 缓存 WaitForSeconds 对象，避免每次循环 new 分配
-            var waitShort = new WaitForSeconds(5f);  // 未连接时
-            var waitLong  = new WaitForSeconds(30f); // 已连接时
-
+            var waitShort = new WaitForSeconds(5f);
+            var waitLong = new WaitForSeconds(30f);
             bool lastState = false;
-            // 探测包：POST 最小 JSON，不读 body（只看连接状态）
             byte[] probeBody = Encoding.UTF8.GetBytes("{\"text\": \"test\"}");
 
             while (true)
             {
-                string ttsUrl = getBaseUrl().TrimEnd('/') + "/tts";
+                Provider provider = getProvider();
+                string ttsUrl = provider == Provider.FasterQwenTts
+                    ? GetQwenTtsHealthEndpoint(getBaseUrl())
+                    : GetGptSovitsEndpoint(getBaseUrl());
                 bool isReady = false;
 
-                using (UnityWebRequest req = new UnityWebRequest(ttsUrl, "POST"))
+                using (UnityWebRequest req = provider == Provider.FasterQwenTts
+                    ? UnityWebRequest.Get(ttsUrl)
+                    : new UnityWebRequest(ttsUrl, "POST"))
                 {
-                    req.uploadHandler = new UploadHandlerRaw(probeBody);
-                    // 不设 downloadHandler：不读 body，减少内存分配
-                    req.SetRequestHeader("Content-Type", "application/json");
+                    if (provider == Provider.GptSovits)
+                    {
+                        req.uploadHandler = new UploadHandlerRaw(probeBody);
+                        req.SetRequestHeader("Content-Type", "application/json");
+                    }
                     req.timeout = 5;
 
                     yield return req.SendWebRequest();
 
-                    isReady = req.result == UnityWebRequest.Result.Success
-                           || req.responseCode == 422
-                           || req.responseCode == 400;
+                    if (provider == Provider.FasterQwenTts)
+                    {
+                        isReady = req.result == UnityWebRequest.Result.Success;
+                    }
+                    else
+                    {
+                        isReady = req.result == UnityWebRequest.Result.Success
+                            || req.responseCode == 422
+                            || req.responseCode == 400;
+                    }
                 }
 
-                // 只在状态变化时回调 + 打 Log，避免每次都刷日志
                 if (isReady != lastState)
                 {
                     lastState = isReady;
                     onStateChanged?.Invoke(isReady);
                     if (isReady)
-                        logger.LogInfo("[TTS Health] 服务已连接 ✅");
+                        logger.LogInfo($"[TTS Health] {provider} 服务已连接");
                     else
-                        logger.LogWarning("[TTS Health] 服务断开 ❌");
+                        logger.LogWarning($"[TTS Health] {provider} 服务断开");
                 }
 
                 yield return isReady ? waitLong : waitShort;
