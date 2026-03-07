@@ -32,12 +32,23 @@ namespace AIChat.Services
         {
             private readonly object _lock = new object();
             private readonly Queue<float> _pcmQueue = new Queue<float>();
+            private long _totalAppendedSamples = 0;
 
             public int SampleRate { get; private set; }
             public int Channels { get; private set; }
             public bool Initialized { get; private set; }
             public bool Completed { get; private set; }
             public string ErrorMessage { get; private set; }
+            public long TotalAppendedSamples
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _totalAppendedSamples;
+                    }
+                }
+            }
 
             public int BufferedSamples
             {
@@ -86,6 +97,7 @@ namespace AIChat.Services
                 {
                     for (int i = 0; i < samples.Length; i++)
                         _pcmQueue.Enqueue(samples[i]);
+                    _totalAppendedSamples += samples.Length;
                 }
             }
 
