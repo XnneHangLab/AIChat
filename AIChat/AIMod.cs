@@ -139,6 +139,7 @@ namespace ChillAIMod
         private bool _isAISpeaking = false;
         private CancellationTokenSource _qwenStreamCancellation;
         private const float QwenStreamStartBufferSeconds = 2.5f;
+        private const float QwenStreamPlaybackTailSeconds = 0.35f;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -1865,6 +1866,9 @@ namespace ChillAIMod
 
             _audioSource.Play();
 
+            bool tailWaitStarted = false;
+            float tailWaitStartTime = 0f;
+
             while (!_isInterrupted)
             {
                 if (!string.IsNullOrEmpty(player.ErrorMessage))
@@ -1872,7 +1876,21 @@ namespace ChillAIMod
 
                 bool queueEmpty = player.BufferedSamples <= 0;
                 if (player.Completed && queueEmpty)
-                    break;
+                {
+                    if (!tailWaitStarted)
+                    {
+                        tailWaitStarted = true;
+                        tailWaitStartTime = Time.unscaledTime;
+                    }
+                    else if (Time.unscaledTime - tailWaitStartTime >= QwenStreamPlaybackTailSeconds)
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    tailWaitStarted = false;
+                }
 
                 yield return null;
             }
