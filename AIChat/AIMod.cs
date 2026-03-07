@@ -143,6 +143,7 @@ namespace ChillAIMod
         private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
+        private const float QwenStreamPlaybackLeadSeconds = 0.08f;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -1941,28 +1942,33 @@ namespace ChillAIMod
             if (shouldSwitchEmotion)
                 yield return StartCoroutine(BeginEmotionAnimation(session.EmotionTag));
 
-            _audioSource.Play();
-            SetTalkingState(true);
-
-            float playStartTime = Time.unscaledTime;
+            double scheduledStartDspTime = AudioSettings.dspTime + QwenStreamPlaybackLeadSeconds;
+            _audioSource.PlayScheduled(scheduledStartDspTime);
             float playbackTailSeconds = GetQwenPlaybackTailSeconds(session.Player.SampleRate);
-            float scheduledEndTime = -1f;
+            double scheduledEndDspTime = -1d;
+            bool talkingStarted = false;
 
             while (!_isInterrupted)
             {
+                if (!talkingStarted && AudioSettings.dspTime >= scheduledStartDspTime)
+                {
+                    SetTalkingState(true);
+                    talkingStarted = true;
+                }
+
                 if (session.Player.Completed)
                 {
                     long appendedSamples = session.Player.TotalAppendedSamples;
                     if (appendedSamples > 0 && session.Player.SampleRate > 0 && session.Player.Channels > 0)
                     {
                         float totalDurationSeconds = appendedSamples / (float)(session.Player.SampleRate * session.Player.Channels);
-                        if (scheduledEndTime < 0f)
+                        if (scheduledEndDspTime < 0d)
                         {
-                            scheduledEndTime = playStartTime + totalDurationSeconds + playbackTailSeconds;
-                            Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句预计播放时长 {totalDurationSeconds:F2}s，计划结束时间窗口 {scheduledEndTime - playStartTime:F2}s");
+                            scheduledEndDspTime = scheduledStartDspTime + totalDurationSeconds + playbackTailSeconds;
+                            Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句预计播放时长 {totalDurationSeconds:F2}s，计划结束时间窗口 {(float)(scheduledEndDspTime - scheduledStartDspTime):F2}s");
                         }
 
-                        if (Time.unscaledTime >= scheduledEndTime)
+                        if (AudioSettings.dspTime >= scheduledEndDspTime)
                             break;
                     }
                 }
