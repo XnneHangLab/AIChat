@@ -1572,6 +1572,7 @@ namespace ChillAIMod
             ));
             
             // 4. 播放循环
+            string lastPlayedEmotion = null;
             for (int sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
             {
                 // 中断检查
@@ -1603,6 +1604,8 @@ namespace ChillAIMod
                 string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
                 string sentenceEmotion = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : emotionTag;
                 if (string.IsNullOrWhiteSpace(sentenceEmotion)) sentenceEmotion = "Think";
+                bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
+                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
                 
                 if (clip != null)
                 {
@@ -1613,18 +1616,31 @@ namespace ChillAIMod
                     myText.text = subtitle;
                     myText.color = Color.white;
                     
-                    // 播放语音 + 动作（按当前句 emotion 播放）
-                    yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
+                    if (shouldSwitchEmotion)
+                    {
+                        // emotion 变化时才切动作，避免同动作重复触发导致抽搐。
+                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
+                    }
+                    else
+                    {
+                        // emotion 不变：只播音频，不重复切动作。
+                        yield return StartCoroutine(PlayAudioWithoutEmotionSwitch(clip));
+                    }
                 }
                 else
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
                     myText.text = subtitle;
                     myText.color = Color.white;
-                    yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
+                    if (shouldSwitchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
+                    else
+                        yield return new WaitForSecondsRealtime(0.1f);
                 }
+                lastPlayedEmotion = sentenceEmotion;
             }
             
+            HandlePendingPredictResultAfterTTS();
             Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
         }
 
@@ -1814,6 +1830,42 @@ namespace ChillAIMod
                 yield return isReady ? waitLong : waitShort;
             }
         }
+
+        IEnumerator PlayAudioWithoutEmotionSwitch(AudioClip voiceClip)
+        {
+            if (voiceClip == null)
+            {
+                yield return new WaitForSecondsRealtime(0.1f);
+                HandlePendingPredictResultAfterTTS();
+                yield break;
+            }
+
+            float clipDuration = voiceClip.length;
+            _isAISpeaking = true;
+            _audioSource.clip = voiceClip;
+            _audioSource.Play();
+
+            // 保持和 PlayNativeAnimation 一致的播放缓冲。
+            yield return new WaitForSecondsRealtime(clipDuration + 0.5f);
+
+            if (_audioSource != null && _audioSource.isPlaying)
+            {
+                Log.Warning("等待结束，强制停止语音播放");
+                _audioSource.Stop();
+            }
+            _isAISpeaking = false;
+
+            HandlePendingPredictResultAfterTTS();
+        }
+
+        private void HandlePendingPredictResultAfterTTS()
+        {
+            if (!_pendingPredictResult) return;
+            _pendingPredictResult = false;
+            _showPredictedReplies = true;
+            StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
+            Log.Info("[预测回复] TTS 播放完成，显示预测结果");
+        }
         
         IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
         {
@@ -1895,15 +1947,8 @@ namespace ChillAIMod
             }
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
-            
-            // TTS 播放完成，检查是否有待显示的预测结果
-            if (_pendingPredictResult)
-            {
-                _pendingPredictResult = false;
-                _showPredictedReplies = true;
-                StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
-                Log.Info("[预测回复] TTS 播放完成，显示预测结果");
-            }
+
+            HandlePendingPredictResultAfterTTS();
         }
 
         // ================= 【新增录音控制】 =================
