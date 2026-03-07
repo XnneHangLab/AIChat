@@ -1828,6 +1828,24 @@ namespace ChillAIMod
                 yield return null;
             }
 
+            if (player.BufferedSamples <= 0)
+            {
+                Log.Warning("[Qwen-TTS] 流结束后没有可播放的缓冲音频，按无语音回退处理");
+                if (myText != null)
+                {
+                    myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                    BringOverlayToFront(myText);
+                    myText.color = Color.white;
+                }
+                yield return StartCoroutine(PlayEmotionOnly(sentenceEmotion, shouldSwitchEmotion));
+                yield break;
+            }
+
+            if (player.Completed && player.BufferedSeconds < QwenStreamStartBufferSeconds)
+            {
+                Log.Info($"[Qwen-TTS] 短句音频总长度仅 {player.BufferedSeconds:F2}s，未达到预缓冲阈值，直接按完整短句播放");
+            }
+
             AudioClip streamClip = AudioClip.Create(
                 "QwenTtsStream",
                 player.SampleRate * 120,
