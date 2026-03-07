@@ -141,6 +141,8 @@ namespace ChillAIMod
         private string _tempWidthString;
         private string _tempHeightString;
         private string _tempVolumeString; // 新增：用于音量输入的临时字符串
+        private Vector2 _predictAngelPromptScrollPosition = Vector2.zero;
+        private Vector2 _predictDevilPromptScrollPosition = Vector2.zero;
 
         private struct StreamingSentenceTask
         {
@@ -910,17 +912,23 @@ namespace ChillAIMod
                     
                     GUILayout.Space(5);
                     GUILayout.Label("小天使预测 System Prompt：");
+                    _predictAngelPromptScrollPosition = GUILayout.BeginScrollView(
+                        _predictAngelPromptScrollPosition,
+                        GUILayout.Height(elementHeight * 4));
                     _predictAngelPromptConfig.Value = GUILayout.TextArea(
                         _predictAngelPromptConfig.Value,
-                        GUILayout.Height(elementHeight * 3),
-                        GUILayout.MinWidth(50f));
+                        GUILayout.ExpandHeight(true));
+                    GUILayout.EndScrollView();
 
                     GUILayout.Space(5);
                     GUILayout.Label("小恶魔预测 System Prompt：");
+                    _predictDevilPromptScrollPosition = GUILayout.BeginScrollView(
+                        _predictDevilPromptScrollPosition,
+                        GUILayout.Height(elementHeight * 4));
                     _predictDevilPromptConfig.Value = GUILayout.TextArea(
                         _predictDevilPromptConfig.Value,
-                        GUILayout.Height(elementHeight * 3),
-                        GUILayout.MinWidth(50f));
+                        GUILayout.ExpandHeight(true));
+                    GUILayout.EndScrollView();
                     
                     GUILayout.Space(5);
                 }
