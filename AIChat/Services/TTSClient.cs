@@ -34,12 +34,66 @@ namespace AIChat.Services
             private readonly Queue<float> _pcmQueue = new Queue<float>();
             private long _totalAppendedSamples = 0;
             private long _totalConsumedSamples = 0;
+            private int _sampleRate = 0;
+            private int _channels = 0;
+            private bool _initialized = false;
+            private bool _completed = false;
+            private string _errorMessage = null;
 
-            public int SampleRate { get; private set; }
-            public int Channels { get; private set; }
-            public bool Initialized { get; private set; }
-            public bool Completed { get; private set; }
-            public string ErrorMessage { get; private set; }
+            public int SampleRate
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _sampleRate;
+                    }
+                }
+            }
+
+            public int Channels
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _channels;
+                    }
+                }
+            }
+
+            public bool Initialized
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _initialized;
+                    }
+                }
+            }
+
+            public bool Completed
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _completed;
+                    }
+                }
+            }
+
+            public string ErrorMessage
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _errorMessage;
+                    }
+                }
+            }
             public long TotalAppendedSamples
             {
                 get
@@ -76,9 +130,12 @@ namespace AIChat.Services
             {
                 get
                 {
-                    if (!Initialized || SampleRate <= 0 || Channels <= 0)
-                        return 0f;
-                    return BufferedSamples / (float)(SampleRate * Channels);
+                    lock (_lock)
+                    {
+                        if (!_initialized || _sampleRate <= 0 || _channels <= 0)
+                            return 0f;
+                        return _pcmQueue.Count / (float)(_sampleRate * _channels);
+                    }
                 }
             }
 
@@ -86,15 +143,15 @@ namespace AIChat.Services
             {
                 lock (_lock)
                 {
-                    if (!Initialized)
+                    if (!_initialized)
                     {
-                        SampleRate = sampleRate;
-                        Channels = channels;
-                        Initialized = true;
+                        _sampleRate = sampleRate;
+                        _channels = channels;
+                        _initialized = true;
                         return;
                     }
 
-                    if (SampleRate != sampleRate || Channels != channels)
+                    if (_sampleRate != sampleRate || _channels != channels)
                         throw new InvalidOperationException("stream sample format changed unexpectedly");
                 }
             }
@@ -132,13 +189,19 @@ namespace AIChat.Services
 
             public void MarkCompleted()
             {
-                Completed = true;
+                lock (_lock)
+                {
+                    _completed = true;
+                }
             }
 
             public void MarkError(string message)
             {
-                ErrorMessage = message;
-                Completed = true;
+                lock (_lock)
+                {
+                    _errorMessage = message;
+                    _completed = true;
+                }
             }
         }
 
