@@ -441,6 +441,8 @@ namespace AIChat.Services
                                     while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
                                     {
                                         string line = await reader.ReadLineAsync();
+                                        if (line == null)
+                                            break;
                                         if (string.IsNullOrEmpty(line))
                                         {
                                             if (dataLines.Count > 0)
@@ -474,6 +476,12 @@ namespace AIChat.Services
                 catch (Exception ex)
                 {
                     string label = string.IsNullOrWhiteSpace(requestLabel) ? "Qwen-TTS" : requestLabel;
+                    if (player.Completed)
+                    {
+                        logger.LogInfo($"[{label}] 流在完成后关闭：{ex.Message}");
+                        player.MarkCompleted();
+                        return;
+                    }
                     logger.LogWarning($"[{label}] 流式请求失败：{ex.Message}");
                     player.MarkError(ex.Message);
                 }
