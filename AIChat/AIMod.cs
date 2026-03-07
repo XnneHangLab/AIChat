@@ -137,9 +137,10 @@ namespace ChillAIMod
         private AudioSource _audioSource;
        
         private bool _isAISpeaking = false;
-        private CancellationTokenSource _qwenStreamCancellation;
+        private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
+        private const int QwenStreamPrefetchWindow = 2;
 
         // 新增：用于 UI 输入的临时字符串，避免每次都转换
         private string _tempWidthString;
@@ -158,6 +159,17 @@ namespace ChillAIMod
                 EmotionTag = emotionTag;
                 SubtitleText = subtitleText;
             }
+        }
+
+        private sealed class QwenStreamingSentenceSession
+        {
+            public int Index;
+            public string EmotionTag;
+            public string SubtitleText;
+            public string TtsText;
+            public TTSClient.StreamingAudioPlayer Player;
+            public CancellationTokenSource Cancellation;
+            public Task StreamTask;
         }
 
         // 默认人设
@@ -1041,6 +1053,7 @@ namespace ChillAIMod
             if (shouldSendMessage)
             {
                 _isInterrupted = false;
+                CancelAllQwenStreams();
                 _aiProcessCoroutine = StartCoroutine(AIProcessRoutine(_playerInput));
                 _playerInput = "";
                 keyEvent.Use(); // 消费事件，防止 TextArea 处理
@@ -1115,6 +1128,7 @@ namespace ChillAIMod
                 if (GUILayout.Button("⛔ 中断", GUILayout.Height(elementHeight * 1.5f), GUILayout.Width(singleBtnWidth)))
                 {
                     _isInterrupted = true;
+                    CancelAllQwenStreams();
                     // fire-and-forget：通知 memory server 中断
                     StartCoroutine(PostInterruptSignal());
                     // 中断时清除预测状态
@@ -1699,178 +1713,252 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
-            string lastPlayedEmotion = null;
+            CancelAllQwenStreams();
 
+            var sessions = new List<QwenStreamingSentenceSession>();
+            bool generationFinished = false;
+
+            StartCoroutine(QwenPrefetchGeneratorLoop(
+                sentences,
+                ttsBaseUrl,
+                refAudioPath,
+                promptText,
+                audioPathCheck,
+                enableTranslation,
+                deeplxUrl,
+                sourceLang,
+                translateTargetLang,
+                sessions,
+                () => generationFinished = true));
+
+            string lastPlayedEmotion = null;
             for (int i = 0; i < sentences.Count; i++)
             {
                 if (_isInterrupted)
-                {
-                    Log.Info($"[Qwen-TTS] 收到中断信号，停止播放（已完成 {i}/{sentences.Count} 句）");
                     break;
-                }
 
-                string sentenceEmotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
-                string originalText = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);
-                if (string.IsNullOrWhiteSpace(originalText))
-                    originalText = sentences[i].SubtitleText.Trim();
-
-                string ttsText = originalText;
-                if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))
+                while (sessions.Count <= i && !generationFinished)
                 {
-                    string translatedText = null;
-                    yield return StartCoroutine(DeepLXTranslate(
-                        deeplxUrl,
-                        originalText,
-                        sourceLang,
-                        translateTargetLang,
-                        Logger,
-                        (result) => translatedText = result
-                    ));
-
-                    if (!string.IsNullOrEmpty(translatedText))
+                    if (_isInterrupted)
+                        yield break;
+                    if (myText != null)
                     {
-                        ttsText = translatedText;
-                        Log.Info($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译成功：{originalText} → {ttsText}");
+                        myText.text = $"正在准备语音... ({i + 1}/{sentences.Count})";
+                        BringOverlayToFront(myText);
                     }
-                    else
-                    {
-                        Log.Warning($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译失败，使用原文兜底");
-                    }
+                    yield return null;
                 }
 
+                if (sessions.Count <= i)
+                    break;
+
+                QwenStreamingSentenceSession session = sessions[i];
                 bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
-                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
+                    || !string.Equals(lastPlayedEmotion, session.EmotionTag, StringComparison.OrdinalIgnoreCase);
 
-                yield return StartCoroutine(PlaySingleSentenceQwenStream(
-                    ttsBaseUrl,
-                    ttsText,
-                    originalText,
-                    sentenceEmotion,
-                    shouldSwitchEmotion,
-                    myText,
-                    refAudioPath,
-                    promptText,
-                    audioPathCheck));
+                yield return StartCoroutine(PlayQwenSessionWhenReady(session, shouldSwitchEmotion, myText));
+                lastPlayedEmotion = session.EmotionTag;
 
-                lastPlayedEmotion = sentenceEmotion;
+                if (session.StreamTask != null)
+                {
+                    while (!session.StreamTask.IsCompleted)
+                        yield return null;
+                }
+
+                UnregisterQwenStreamCancellation(session.Cancellation, true);
             }
 
+            CancelAllQwenStreams();
             HandlePendingPredictResultAfterTTS();
             Log.Info(_isInterrupted ? "[Qwen-TTS] 已中断" : "[Qwen-TTS] 播放完成");
         }
 
-        IEnumerator PlaySingleSentenceQwenStream(
+        IEnumerator QwenPrefetchGeneratorLoop(
+            List<StreamingSentenceTask> sentences,
             string ttsBaseUrl,
-            string ttsText,
-            string originalSubtitle,
-            string sentenceEmotion,
-            bool shouldSwitchEmotion,
-            UnityEngine.UI.Text myText,
             string refAudioPath,
             string promptText,
-            bool audioPathCheck)
+            bool audioPathCheck,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang,
+            List<QwenStreamingSentenceSession> sessions,
+            Action onCompleted)
         {
-            var player = new TTSClient.StreamingAudioPlayer();
-            _qwenStreamCancellation?.Cancel();
-            _qwenStreamCancellation?.Dispose();
-            _qwenStreamCancellation = new CancellationTokenSource();
+            try
+            {
+                for (int i = 0; i < sentences.Count; i++)
+                {
+                    if (_isInterrupted)
+                        break;
 
-            Task streamTask = TTSClient.StreamQwenTtsAsync(
-                ttsBaseUrl,
-                ttsText,
-                refAudioPath,
-                promptText,
-                player,
-                Logger,
-                _qwenStreamCancellation.Token,
-                audioPathCheck);
+                    while (GetInFlightQwenSessionCount(sessions) >= QwenStreamPrefetchWindow)
+                    {
+                        if (_isInterrupted)
+                            yield break;
+                        yield return null;
+                    }
 
-            while (!player.Initialized && string.IsNullOrEmpty(player.ErrorMessage) && !player.Completed)
+                    string emotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
+                    string subtitle = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);
+                    if (string.IsNullOrWhiteSpace(subtitle))
+                        subtitle = sentences[i].SubtitleText.Trim();
+
+                    string ttsText = subtitle;
+                    if (enableTranslation && !string.IsNullOrEmpty(deeplxUrl))
+                    {
+                        string translatedText = null;
+                        yield return StartCoroutine(DeepLXTranslate(
+                            deeplxUrl,
+                            subtitle,
+                            sourceLang,
+                            translateTargetLang,
+                            Logger,
+                            (result) => translatedText = result
+                        ));
+
+                        if (!string.IsNullOrEmpty(translatedText))
+                        {
+                            ttsText = translatedText;
+                            Log.Info($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译成功：{subtitle} → {ttsText}");
+                        }
+                        else
+                        {
+                            Log.Warning($"[Qwen-TTS] 第 {i + 1}/{sentences.Count} 句翻译失败，使用原文兜底");
+                        }
+                    }
+
+                    var session = new QwenStreamingSentenceSession
+                    {
+                        Index = i,
+                        EmotionTag = emotion,
+                        SubtitleText = subtitle,
+                        TtsText = ttsText,
+                        Player = new TTSClient.StreamingAudioPlayer(),
+                        Cancellation = new CancellationTokenSource(),
+                    };
+
+                    RegisterQwenStreamCancellation(session.Cancellation);
+                    session.StreamTask = TTSClient.StreamQwenTtsAsync(
+                        ttsBaseUrl,
+                        session.TtsText,
+                        refAudioPath,
+                        promptText,
+                        session.Player,
+                        Logger,
+                        session.Cancellation.Token,
+                        audioPathCheck);
+
+                    sessions.Add(session);
+                }
+            }
+            finally
+            {
+                onCompleted?.Invoke();
+            }
+        }
+
+        int GetInFlightQwenSessionCount(List<QwenStreamingSentenceSession> sessions)
+        {
+            int count = 0;
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                if (sessions[i].StreamTask != null && !sessions[i].StreamTask.IsCompleted)
+                    count++;
+            }
+            return count;
+        }
+
+        IEnumerator PlayQwenSessionWhenReady(
+            QwenStreamingSentenceSession session,
+            bool shouldSwitchEmotion,
+            UnityEngine.UI.Text myText)
+        {
+            while (!session.Player.Initialized && string.IsNullOrEmpty(session.Player.ErrorMessage) && !session.Player.Completed)
             {
                 if (_isInterrupted)
                 {
-                    _qwenStreamCancellation.Cancel();
+                    session.Cancellation?.Cancel();
                     yield break;
                 }
                 if (myText != null)
                 {
-                    myText.text = $"正在流式生成语音... 缓冲 {player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
+                    myText.text = $"正在流式生成语音... 缓冲 {session.Player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
                     BringOverlayToFront(myText);
                 }
                 yield return null;
             }
 
-            if (!string.IsNullOrEmpty(player.ErrorMessage) || !player.Initialized)
+            if (!string.IsNullOrEmpty(session.Player.ErrorMessage) || !session.Player.Initialized)
             {
-                Log.Warning($"[Qwen-TTS] 流式句子启动失败：{player.ErrorMessage ?? "未收到任何音频块"}");
+                Log.Warning($"[Qwen-TTS] 第 {session.Index + 1} 句启动失败：{session.Player.ErrorMessage ?? "未收到任何音频块"}");
                 if (myText != null)
                 {
-                    myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                    myText.text = ResponseParser.InsertLineBreaks(session.SubtitleText, 25);
                     BringOverlayToFront(myText);
                     myText.color = Color.white;
                 }
-                yield return StartCoroutine(PlayEmotionOnly(sentenceEmotion, shouldSwitchEmotion));
+                yield return StartCoroutine(PlayEmotionOnly(session.EmotionTag, shouldSwitchEmotion));
                 yield break;
             }
 
-            while (player.BufferedSeconds < QwenStreamStartBufferSeconds && !player.Completed && string.IsNullOrEmpty(player.ErrorMessage))
+            while (session.Player.BufferedSeconds < QwenStreamStartBufferSeconds
+                && !session.Player.Completed
+                && string.IsNullOrEmpty(session.Player.ErrorMessage))
             {
                 if (_isInterrupted)
                 {
-                    _qwenStreamCancellation.Cancel();
+                    session.Cancellation?.Cancel();
                     yield break;
                 }
                 if (myText != null)
                 {
-                    myText.text = $"正在缓冲语音... {player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
+                    myText.text = $"正在缓冲语音... {session.Player.BufferedSeconds:F2}/{QwenStreamStartBufferSeconds:F1}s";
                     BringOverlayToFront(myText);
                 }
                 yield return null;
             }
 
-            if (player.BufferedSamples <= 0)
+            if (session.Player.BufferedSamples <= 0)
             {
-                Log.Warning("[Qwen-TTS] 流结束后没有可播放的缓冲音频，按无语音回退处理");
+                Log.Warning($"[Qwen-TTS] 第 {session.Index + 1} 句无可播放音频，按无语音回退");
                 if (myText != null)
                 {
-                    myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                    myText.text = ResponseParser.InsertLineBreaks(session.SubtitleText, 25);
                     BringOverlayToFront(myText);
                     myText.color = Color.white;
                 }
-                yield return StartCoroutine(PlayEmotionOnly(sentenceEmotion, shouldSwitchEmotion));
+                yield return StartCoroutine(PlayEmotionOnly(session.EmotionTag, shouldSwitchEmotion));
                 yield break;
             }
 
-            if (player.Completed && player.BufferedSeconds < QwenStreamStartBufferSeconds)
+            if (session.Player.Completed && session.Player.BufferedSeconds < QwenStreamStartBufferSeconds)
             {
-                Log.Info($"[Qwen-TTS] 短句音频总长度仅 {player.BufferedSeconds:F2}s，未达到预缓冲阈值，直接按完整短句播放");
+                Log.Info($"[Qwen-TTS] 第 {session.Index + 1} 句短句长度 {session.Player.BufferedSeconds:F2}s，直接按完整短句播放");
             }
 
             AudioClip streamClip = AudioClip.Create(
-                "QwenTtsStream",
-                player.SampleRate * 120,
-                player.Channels,
-                player.SampleRate,
+                $"QwenTtsStream_{session.Index}",
+                session.Player.SampleRate * 120,
+                session.Player.Channels,
+                session.Player.SampleRate,
                 true,
-                player.Read);
+                session.Player.Read);
 
             if (myText != null)
             {
-                myText.text = ResponseParser.InsertLineBreaks(originalSubtitle, 25);
+                myText.text = ResponseParser.InsertLineBreaks(session.SubtitleText, 25);
                 BringOverlayToFront(myText);
                 myText.color = Color.white;
             }
 
-            yield return StartCoroutine(PlayStreamingClipWithEmotion(streamClip, player, sentenceEmotion, shouldSwitchEmotion));
-
-            while (!streamTask.IsCompleted)
-                yield return null;
+            yield return StartCoroutine(PlayQwenSessionClip(streamClip, session, shouldSwitchEmotion));
         }
 
-        IEnumerator PlayStreamingClipWithEmotion(
+        IEnumerator PlayQwenSessionClip(
             AudioClip voiceClip,
-            TTSClient.StreamingAudioPlayer player,
-            string emotion,
+            QwenStreamingSentenceSession session,
             bool shouldSwitchEmotion)
         {
             if (voiceClip == null)
@@ -1880,7 +1968,7 @@ namespace ChillAIMod
             _isAISpeaking = true;
 
             if (shouldSwitchEmotion)
-                yield return StartCoroutine(BeginEmotionAnimation(emotion));
+                yield return StartCoroutine(BeginEmotionAnimation(session.EmotionTag));
 
             _audioSource.Play();
 
@@ -1889,15 +1977,11 @@ namespace ChillAIMod
 
             while (!_isInterrupted)
             {
-                if (!string.IsNullOrEmpty(player.ErrorMessage))
-                    break;
-
-                if (player.Completed)
+                if (session.Player.Completed)
                 {
-                    long appendedSamples = player.TotalAppendedSamples;
-                    long consumedSamples = player.TotalConsumedSamples;
-                    long remainingSamples = appendedSamples - consumedSamples;
-                    bool playbackCaughtUp = remainingSamples <= 0;
+                    long appendedSamples = session.Player.TotalAppendedSamples;
+                    long consumedSamples = session.Player.TotalConsumedSamples;
+                    bool playbackCaughtUp = consumedSamples >= appendedSamples && appendedSamples > 0;
 
                     if (playbackCaughtUp)
                     {
@@ -1922,6 +2006,7 @@ namespace ChillAIMod
 
             if (_audioSource != null && _audioSource.isPlaying)
                 _audioSource.Stop();
+            _audioSource.clip = null;
 
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
@@ -2376,9 +2461,7 @@ namespace ChillAIMod
                 StopCoroutine(_deeplxHealthCheckCoroutine);
                 _deeplxHealthCheckCoroutine = null;
             }
-            _qwenStreamCancellation?.Cancel();
-            _qwenStreamCancellation?.Dispose();
-            _qwenStreamCancellation = null;
+            CancelAllQwenStreams();
         }
 
         // ================= 【中断 & URL 辅助方法】 =================
@@ -2435,6 +2518,33 @@ namespace ChillAIMod
 
             _useGptSovitsTtsConfig.Value = useGptSovits;
             _useFasterQwenTtsConfig.Value = useFasterQwenTts;
+        }
+
+        private void RegisterQwenStreamCancellation(CancellationTokenSource cancellation)
+        {
+            if (cancellation == null) return;
+            if (!_activeQwenStreamCancellations.Contains(cancellation))
+                _activeQwenStreamCancellations.Add(cancellation);
+        }
+
+        private void UnregisterQwenStreamCancellation(CancellationTokenSource cancellation, bool dispose = false)
+        {
+            if (cancellation == null) return;
+            _activeQwenStreamCancellations.Remove(cancellation);
+            if (dispose)
+                cancellation.Dispose();
+        }
+
+        private void CancelAllQwenStreams()
+        {
+            for (int i = 0; i < _activeQwenStreamCancellations.Count; i++)
+            {
+                try { _activeQwenStreamCancellations[i].Cancel(); }
+                catch { }
+                try { _activeQwenStreamCancellations[i].Dispose(); }
+                catch { }
+            }
+            _activeQwenStreamCancellations.Clear();
         }
 
         /// <summary>
