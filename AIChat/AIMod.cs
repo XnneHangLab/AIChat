@@ -552,13 +552,13 @@ namespace ChillAIMod
                     GUILayout.Label("API URL：");
                     _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     
-                    if (!_useOllama.Value && !_useXnneHangLabChatServer.Value) {
+                    if (!_useOllama.Value) {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
                     
-                    // 模型名称：启用 Chat Server 時不需要模型名稱配置
-                    if (!_useXnneHangLabChatServer.Value)
+                    // 模型名称：仅在非 Ollama 模式下显示
+                    if (!_useOllama.Value)
                     {
                         GUILayout.Label("模型名称：");
                         _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
