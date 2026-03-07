@@ -22,7 +22,6 @@ namespace ChillAIMod
     {
         // ================= 【配置项】 =================
         private ConfigEntry<bool> _useOllama;
-        private ConfigEntry<bool> _useXnneHangLab;
         private ConfigEntry<ThinkMode> _thinkModeConfig;
         private ConfigEntry<string> _apiKeyConfig;
         private ConfigEntry<string> _modelConfig;
@@ -124,8 +123,6 @@ namespace ChillAIMod
         private bool _showTranslationSettings = false;
 
         // --- XnneHangLab Server base URL ---
-        private ConfigEntry<string> _xnneHangLabBaseUrlConfig;
-
         // --- 中断标志 ---
         private bool _isInterrupted = false;
         // 当前 AIProcessRoutine 协程引用（用于中断时 StopCoroutine）
@@ -199,7 +196,6 @@ namespace ChillAIMod
             
             // --- LLM 配置 ---
             _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
-            _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab /memory/chat");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
                 "http://127.0.0.1:12393/memory/chat",
@@ -246,16 +242,11 @@ namespace ChillAIMod
             _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
-                "DeepLX 翻译服务 URL（未勾选 XnneHangLab 时手动填写；勾选后由 Server 地址自动拼接）");
+                "DeepLX 翻译服务 URL（未启用 XnneHangLab Chat Server 时手动填写；启用后由 Server 地址自动拼接）");
             _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "ZH",
                 "翻译源语言（如 ZH=中文，JA=日文，EN=英文）");
             _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "JA",
                 "翻译目标语言（如 JA=日文，ZH=中文，EN=英文）");
-
-            // --- XnneHangLab Server base URL ---
-            _xnneHangLabBaseUrlConfig = Config.Bind("1. LLM", "XnneHangLab_Base_URL",
-                "http://127.0.0.1:12393",
-                "XnneHangLab Server 根地址（勾选 XnneHangLab 时生效，各端点由代码自动拼接）");
 
             // --- 新增：XnneHangLab Chat Server 独立配置 ---
             _useXnneHangLabChatServer = Config.Bind("6. XnneHangLab Chat", "Use_XnneHangLab_Chat_Server", false,
@@ -543,27 +534,9 @@ namespace ChillAIMod
                 {
                     GUILayout.Space(5);
                     
-                    // 【API 提供商选择】两个选项互斥
+                    // 【API 提供商选择】
                     bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    bool newUseXnneHangLab = GUILayout.Toggle(_useXnneHangLab.Value, "使用 XnneHangLab /memory/chat", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    
-                    // 互斥逻辑：最多只能勾选一个
-                    if (newUseOllama && newUseXnneHangLab)
-                    {
-                        // 如果两个都被勾选，只保留最后点击的那个（这里通过判断哪个状态改变了来决定）
-                        if (_useOllama.Value == false)
-                        {
-                            newUseOllama = true;
-                            newUseXnneHangLab = false;
-                        }
-                        else
-                        {
-                            newUseOllama = false;
-                            newUseXnneHangLab = true;
-                        }
-                    }
                     _useOllama.Value = newUseOllama;
-                    _useXnneHangLab.Value = newUseXnneHangLab;
                     
                     // 【深度思考模式选项】
                     GUILayout.Space(5);
@@ -576,33 +549,16 @@ namespace ChillAIMod
                         _thinkModeConfig.Value = (ThinkMode)newMode;
                     }
 
-                    if (_useXnneHangLab.Value)
-                    {
-                        // XnneHangLab 模式：显示 base URL 输入框 + 各端点说明
-                        GUILayout.Label("XnneHangLab Server 地址：");
-                        _xnneHangLabBaseUrlConfig.Value = GUILayout.TextField(_xnneHangLabBaseUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                        GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
-                        endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
-                        Color prevC = GUI.color;
-                        GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
-                        GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
-                        GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
-                        GUI.color = prevC;
-                    }
-                    else
-                    {
-                        GUILayout.Label("API URL：");
-                        _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    }
+                    GUILayout.Label("API URL：");
+                    _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     
-                    if (!_useOllama.Value && !_useXnneHangLab.Value) {
+                    if (!_useOllama.Value && !_useXnneHangLabChatServer.Value) {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
                     
-                    // 模型名称：使用 XnneHangLab 時不顯示（不需要模型名稱配置）
-                    if (!_useXnneHangLab.Value)
+                    // 模型名称：启用 Chat Server 時不需要模型名稱配置
+                    if (!_useXnneHangLabChatServer.Value)
                     {
                         GUILayout.Label("模型名称：");
                         _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -813,7 +769,7 @@ namespace ChillAIMod
 
                 // ================= XnneHangLab Chat Server 配置区域 =================
                 GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
-                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server" : "▶️ XnneHangLab Chat Server";
+                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server 设置" : "▶️ XnneHangLab Chat Server 设置";
                 if (GUILayout.Button(xnneChatBtnText, GUILayout.Height(elementHeight)))
                 {
                     _showXnneHangLabChatSettings = !_showXnneHangLabChatSettings;
@@ -963,7 +919,7 @@ namespace ChillAIMod
 
                     GUILayout.Space(5);
 
-                    if (_useXnneHangLab.Value)
+                    if (_useXnneHangLabChatServer.Value)
                     {
                         // XnneHangLab 模式：DeepLX 由 Server 托管，不需要手动填 URL
                         GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
@@ -1264,7 +1220,7 @@ namespace ChillAIMod
                 SystemPrompt = systemPromptToSend,
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
-                UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLab = false,
                 UseXnneHangLabChatServer = useChatServer, // 新增字段
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
@@ -1290,7 +1246,7 @@ namespace ChillAIMod
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
                     // TODO: 以後改用 JsonUtility 直接解析
-                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
+                    if (requestContext.UseXnneHangLabChatServer)
                     {
                         fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
                     }
@@ -2057,8 +2013,8 @@ namespace ChillAIMod
         /// </summary>
         private string GetDeepLXUrl()
         {
-            if (_useXnneHangLab.Value)
-                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/translate/deeplx";
+            if (_useXnneHangLabChatServer.Value)
+                return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/translate/deeplx";
             return _deeplxUrlConfig.Value;
         }
 
@@ -2071,10 +2027,6 @@ namespace ChillAIMod
             if (_useXnneHangLabChatServer.Value)
                 return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/memory/chat";
             
-            // 兼容旧配置
-            if (_useXnneHangLab.Value)
-                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/chat";
-            
             return _chatApiUrlConfig.Value;
         }
 
@@ -2083,12 +2035,9 @@ namespace ChillAIMod
         /// </summary>
         IEnumerator PostInterruptSignal()
         {
-            // 新增：支持独立的 XnneHangLab Chat Server 配置
-            if (!_useXnneHangLabChatServer.Value && !_useXnneHangLab.Value) yield break;
+            if (!_useXnneHangLabChatServer.Value) yield break;
 
-            string baseUrl = _useXnneHangLabChatServer.Value 
-                ? _xnneHangLabChatBaseUrl.Value 
-                : _xnneHangLabBaseUrlConfig.Value;
+            string baseUrl = _xnneHangLabChatBaseUrl.Value;
             
             string url = baseUrl.TrimEnd('/') + "/memory/interrupt";
             Log.Info($"[中断] 发送 POST {url}");
@@ -2436,7 +2385,7 @@ namespace ChillAIMod
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
-                UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLab = false,
                 UseXnneHangLabChatServer = useChatServer,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
@@ -2454,7 +2403,7 @@ namespace ChillAIMod
                 {
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     string summary;
-                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
+                    if (requestContext.UseXnneHangLabChatServer)
                     {
                         summary = rawResponse;
                     }
