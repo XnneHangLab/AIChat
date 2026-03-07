@@ -48,6 +48,7 @@ namespace ChillAIMod
         
         // --- 新增：日志记录设置 ---
         private ConfigEntry<bool> _logApiRequestBodyConfig;
+        private ConfigEntry<bool> _hideApiKeyInUiConfig;
         
         // --- 新增：API路径修正设置 ---
         private ConfigEntry<bool> _fixApiPathForThinkModeConfig;
@@ -204,6 +205,8 @@ namespace ChillAIMod
             _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
             _logApiRequestBodyConfig = Config.Bind("1. LLM", "LogApiRequestBody", false,
                 "在日志中记录 API 请求体");
+            _hideApiKeyInUiConfig = Config.Bind("1. LLM", "HideApiKeyInUI", false,
+                "隐藏 API Key 输入框（录屏用）");
             _fixApiPathForThinkModeConfig = Config.Bind("1. LLM", "FixApiPathForThinkMode", true,
                 "指定深度思考模式时尝试改用 Ollama 原生 API 路径");
 
@@ -551,8 +554,14 @@ namespace ChillAIMod
 
                     GUILayout.Label("API URL：");
                     _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                    GUILayout.Space(5);
+                    _hideApiKeyInUiConfig.Value = GUILayout.Toggle(
+                        _hideApiKeyInUiConfig.Value,
+                        "隐藏 API Key 输入框（录屏用）",
+                        GUILayout.Height(elementHeight));
                     
-                    if (!_useOllama.Value) {
+                    if (!_useOllama.Value && !_hideApiKeyInUiConfig.Value) {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
