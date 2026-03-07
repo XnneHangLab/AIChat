@@ -141,6 +141,18 @@ namespace ChillAIMod
         private string _tempHeightString;
         private string _tempVolumeString; // 新增：用于音量输入的临时字符串
 
+        private struct StreamingSentenceTask
+        {
+            public string EmotionTag;
+            public string SubtitleText;
+
+            public StreamingSentenceTask(string emotionTag, string subtitleText)
+            {
+                EmotionTag = emotionTag;
+                SubtitleText = subtitleText;
+            }
+        }
+
         // 默认人设
         private const string DefaultPersona = @"
             You are Satone（さとね）, a girl who loves writing novels and is full of imagination.
@@ -1332,6 +1344,7 @@ namespace ChillAIMod
                         // 流式 TTS 模式：断句 + 异步生成 + 逐句播放
                         Log.Info("[TTS] 服务就绪，启用流式断句播放");
                         yield return StartCoroutine(PlayStreamingTTS(
+                            fullResponse,
                             voiceText,
                             subtitleText,
                             emotionTag,
@@ -1425,7 +1438,78 @@ namespace ChillAIMod
         /// 仅在 TTS 服务就绪时调用
         /// 工作流：中文字幕分句 → 字幕直接入队显示 → DeepLX(ZH→JA) → 日文送 TTS
         /// </summary>
+        List<StreamingSentenceTask> BuildStreamingSentenceTasks(
+            string rawResponse,
+            string fallbackVoiceText,
+            string fallbackSubtitleText,
+            string defaultEmotionTag)
+        {
+            var tasks = new List<StreamingSentenceTask>();
+            string safeDefaultEmotion = string.IsNullOrWhiteSpace(defaultEmotionTag) ? "Think" : defaultEmotionTag.Trim();
+
+            // 优先按 [Emotion] ||| 分块，支持一次回复多个动作段。
+            if (!string.IsNullOrWhiteSpace(rawResponse))
+            {
+                var tagMatches = System.Text.RegularExpressions.Regex.Matches(
+                    rawResponse,
+                    @"\[(?<emotion>[^\]\r\n]+)\]\s*\|\|\|\s*",
+                    System.Text.RegularExpressions.RegexOptions.Multiline);
+
+                if (tagMatches.Count > 0)
+                {
+                    for (int i = 0; i < tagMatches.Count; i++)
+                    {
+                        string emotion = tagMatches[i].Groups["emotion"].Value.Trim();
+                        if (string.IsNullOrWhiteSpace(emotion))
+                            emotion = safeDefaultEmotion;
+
+                        int start = tagMatches[i].Index + tagMatches[i].Length;
+                        int end = (i + 1 < tagMatches.Count) ? tagMatches[i + 1].Index : rawResponse.Length;
+                        int len = end - start;
+                        if (len <= 0) continue;
+
+                        string chunkText = rawResponse.Substring(start, len).Trim();
+                        chunkText = ResponseParser.StripEmotionPrefix(chunkText);
+                        if (string.IsNullOrWhiteSpace(chunkText)) continue;
+
+                        string[] splitSentences = ResponseParser.SplitByChinesePunctuation(chunkText);
+                        if (splitSentences.Length == 0)
+                        {
+                            tasks.Add(new StreamingSentenceTask(emotion, chunkText));
+                        }
+                        else
+                        {
+                            foreach (string sentence in splitSentences)
+                            {
+                                if (!string.IsNullOrWhiteSpace(sentence))
+                                    tasks.Add(new StreamingSentenceTask(emotion, sentence.Trim()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (tasks.Count > 0)
+                return tasks;
+
+            // 回退：沿用原逻辑（按 subtitle 断句，全部使用默认动作）。
+            fallbackSubtitleText = ResponseParser.StripEmotionPrefix(fallbackSubtitleText);
+            fallbackVoiceText = ResponseParser.StripEmotionPrefix(fallbackVoiceText);
+            string[] fallbackSentences = ResponseParser.SplitByChinesePunctuation(fallbackSubtitleText);
+            if (fallbackSentences.Length == 0 && !string.IsNullOrWhiteSpace(fallbackVoiceText))
+                fallbackSentences = new string[] { fallbackVoiceText };
+
+            foreach (string sentence in fallbackSentences)
+            {
+                if (!string.IsNullOrWhiteSpace(sentence))
+                    tasks.Add(new StreamingSentenceTask(safeDefaultEmotion, sentence.Trim()));
+            }
+
+            return tasks;
+        }
+
         IEnumerator PlayStreamingTTS(
+            string rawResponse,
             string fullVoiceText,
             string fullSubtitleText,
             string emotionTag,
@@ -1441,25 +1525,24 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
-            // 0. 防御性剥离：去掉 [Emotion] ||| 前缀，确保送 TTS/DeepLX 的文本干净
-            fullSubtitleText = ResponseParser.StripEmotionPrefix(fullSubtitleText);
-            fullVoiceText = ResponseParser.StripEmotionPrefix(fullVoiceText);
-
-            // 1. 按中文标点断句（字幕文本）
-            string[] sentences = ResponseParser.SplitByChinesePunctuation(fullSubtitleText);
-            
-            // 如果没有有效句子，回退到完整文本
-            if (sentences.Length == 0)
+            // 0. 构建逐句任务（每句包含 emotion + 字幕文本）
+            List<StreamingSentenceTask> sentences = BuildStreamingSentenceTasks(
+                rawResponse,
+                fullVoiceText,
+                fullSubtitleText,
+                emotionTag);
+            if (sentences.Count == 0)
             {
-                Log.Warning("[流式 TTS] 断句失败，回退到完整文本模式");
-                sentences = new string[] { fullVoiceText };
+                Log.Warning("[流式 TTS] 无可播放句子，提前结束");
+                yield break;
             }
-            
-            Log.Info($"[流式 TTS] 断句完成，共 {sentences.Length} 句");
+
+            Log.Info($"[流式 TTS] 断句完成，共 {sentences.Count} 句");
             
             // 2. 队列管理
             Queue<AudioClip> audioQueue = new Queue<AudioClip>();
             Queue<string> subtitleQueue = new Queue<string>();
+            Queue<string> emotionQueue = new Queue<string>();
             
             // 3. 启动后台 TTS+ 翻译生成协程
             StartCoroutine(TTSWithTranslationGeneratorLoop(
@@ -1472,6 +1555,7 @@ namespace ChillAIMod
                 audioPathCheck,
                 audioQueue,
                 subtitleQueue,
+                emotionQueue,
                 enableTranslation,
                 deeplxUrl,
                 sourceLang,
@@ -1479,8 +1563,7 @@ namespace ChillAIMod
             ));
             
             // 4. 播放循环
-            int sentenceIndex = 0;
-            foreach (var sentence in sentences)
+            for (int sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
             {
                 // 中断检查
                 if (_isInterrupted)
@@ -1488,25 +1571,29 @@ namespace ChillAIMod
                     Log.Info("[流式 TTS] 收到中断信号，停止播放");
                     audioQueue.Clear();
                     subtitleQueue.Clear();
+                    emotionQueue.Clear();
                     break;
                 }
 
                 // 等待队列里有音频（等待期间也检查中断）
-                while (audioQueue.Count == 0)
+                while (audioQueue.Count == 0 || subtitleQueue.Count == 0 || emotionQueue.Count == 0)
                 {
                     if (_isInterrupted)
                     {
                         Log.Info("[流式 TTS] 等待期间收到中断信号，停止播放");
                         audioQueue.Clear();
                         subtitleQueue.Clear();
+                        emotionQueue.Clear();
                         yield break;
                     }
-                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Length})";
+                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Count})";
                     yield return null;
                 }
                 
                 AudioClip clip = audioQueue.Dequeue();
                 string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
+                string sentenceEmotion = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : emotionTag;
+                if (string.IsNullOrWhiteSpace(sentenceEmotion)) sentenceEmotion = "Think";
                 
                 if (clip != null)
                 {
@@ -1517,18 +1604,16 @@ namespace ChillAIMod
                     myText.text = subtitle;
                     myText.color = Color.white;
                     
-                    // 播放语音 + 动作（PlayNativeAnimation 内部会等播放完，中断后不再进入下一句）
-                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, clip));
+                    // 播放语音 + 动作（按当前句 emotion 播放）
+                    yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
                 }
                 else
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
                     myText.text = subtitle;
                     myText.color = Color.white;
-                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
+                    yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
                 }
-                
-                sentenceIndex++;
             }
             
             Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
@@ -1538,7 +1623,7 @@ namespace ChillAIMod
         /// 后台 TTS+ 翻译生成循环：逐句生成 TTS + DeepLX 翻译
         /// </summary>
         IEnumerator TTSWithTranslationGeneratorLoop(
-            string[] sentences,
+            List<StreamingSentenceTask> sentences,
             string ttsBaseUrl,
             string targetLang,
             string refAudioPath,
@@ -1547,24 +1632,26 @@ namespace ChillAIMod
             bool audioPathCheck,
             Queue<AudioClip> audioQueue,
             Queue<string> subtitleQueue,
+            Queue<string> emotionQueue,
             bool enableTranslation,
             string deeplxUrl,
             string sourceLang,
             string translateTargetLang)
         {
-            for (int i = 0; i < sentences.Length; i++)
+            for (int i = 0; i < sentences.Count; i++)
             {
                 // 中断检查：停止生成剩余句子
                 if (_isInterrupted)
                 {
-                    Log.Info($"[TTS 生成] 收到中断信号，停止生成（已完成 {i}/{sentences.Length} 句）");
+                    Log.Info($"[TTS 生成] 收到中断信号，停止生成（已完成 {i}/{sentences.Count} 句）");
                     yield break;
                 }
 
+                string sentenceEmotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
                 // 防御性清洗：即使上游解析异常，也不让 [Emotion] ||| 标签流入翻译/TTS。
-                string originalText = ResponseParser.StripEmotionPrefix(sentences[i]);  // 中文原文（字幕用）
+                string originalText = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);  // 中文原文（字幕用）
                 if (string.IsNullOrWhiteSpace(originalText))
-                    originalText = sentences[i].Trim();
+                    originalText = sentences[i].SubtitleText.Trim();
                 string ttsText = originalText;       // TTS 用文本，默认用原文兜底
                 
                 // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS
@@ -1583,16 +1670,17 @@ namespace ChillAIMod
                     if (!string.IsNullOrEmpty(translatedText))
                     {
                         ttsText = translatedText;  // 翻译成功：日文送 TTS
-                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译成功：{originalText} → {ttsText}");
+                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Count} 句翻译成功：{originalText} → {ttsText}");
                     }
                     else
                     {
-                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译失败，TTS 使用中文原文兜底");
+                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Count} 句翻译失败，TTS 使用中文原文兜底");
                     }
                 }
                 
                 // 字幕显示中文原文（带换行处理）
                 subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(originalText, 25));
+                emotionQueue.Enqueue(sentenceEmotion);
                 
                 // 生成 TTS 语音（使用翻译后的日文，或原文兜底）
                 AudioClip clip = null;
@@ -1611,11 +1699,11 @@ namespace ChillAIMod
                 
                 if (clip != null)
                 {
-                    Log.Info($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句生成成功");
+                    Log.Info($"[TTS+ 翻译] 第 {i + 1}/{sentences.Count} 句生成成功");
                 }
                 else
                 {
-                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句 TTS 生成失败");
+                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Count} 句 TTS 生成失败");
                 }
                 
                 audioQueue.Enqueue(clip);
