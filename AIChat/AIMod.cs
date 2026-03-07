@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Reflection;
 using System.IO;
 using System.Threading.Tasks;
@@ -10,7 +9,6 @@ using BepInEx.Configuration;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
-using System.Diagnostics;
 using AIChat.Core;
 using AIChat.Services;
 using AIChat.Unity;
@@ -24,7 +22,6 @@ namespace ChillAIMod
     {
         // ================= 【配置项】 =================
         private ConfigEntry<bool> _useOllama;
-        private ConfigEntry<bool> _useXnneHangLab;
         private ConfigEntry<ThinkMode> _thinkModeConfig;
         private ConfigEntry<string> _apiKeyConfig;
         private ConfigEntry<string> _modelConfig;
@@ -36,11 +33,7 @@ namespace ChillAIMod
         private ConfigEntry<string> _personaConfig;
         private ConfigEntry<string> _chatApiUrlConfig;
 
-        private ConfigEntry<string> _TTSServicePathConfig;
-        private ConfigEntry<bool> _LaunchTTSServiceConfig;
-        private ConfigEntry<bool> _quitTTSServiceOnQuitConfig;
         private ConfigEntry<bool> _audioPathCheckConfig;
-        private ConfigEntry<bool> _japaneseCheckConfig;
 
         // --- 新增窗口大小配置 ---
         private ConfigEntry<float> _windowWidthConfig;
@@ -55,6 +48,7 @@ namespace ChillAIMod
         
         // --- 新增：日志记录设置 ---
         private ConfigEntry<bool> _logApiRequestBodyConfig;
+        private ConfigEntry<bool> _hideApiKeyInUiConfig;
         
         // --- 新增：API路径修正设置 ---
         private ConfigEntry<bool> _fixApiPathForThinkModeConfig;
@@ -74,7 +68,8 @@ namespace ChillAIMod
         private ConfigEntry<bool> _disablePersonaWhenUsingChatServer;
 
         // --- 新增：预测对话配置 ---
-        private ConfigEntry<string> _predictPromptConfig;
+        private ConfigEntry<string> _predictAngelPromptConfig;
+        private ConfigEntry<string> _predictDevilPromptConfig;
         private ConfigEntry<bool> _enablePredictReply;
 
         // --- 新增：各配置区域展开状态 ---
@@ -115,7 +110,6 @@ namespace ChillAIMod
         private bool _isProcessing = false;
         private bool _isResizing = false; // 新增：拖拽调整大小状态
 
-        private Process _launchedTTSProcess;
         private bool _isTTSServiceReady = false;
         private Coroutine _ttsHealthCheckCoroutine;
 
@@ -130,8 +124,6 @@ namespace ChillAIMod
         private bool _showTranslationSettings = false;
 
         // --- XnneHangLab Server base URL ---
-        private ConfigEntry<string> _xnneHangLabBaseUrlConfig;
-
         // --- 中断标志 ---
         private bool _isInterrupted = false;
         // 当前 AIProcessRoutine 协程引用（用于中断时 StopCoroutine）
@@ -147,6 +139,20 @@ namespace ChillAIMod
         private string _tempWidthString;
         private string _tempHeightString;
         private string _tempVolumeString; // 新增：用于音量输入的临时字符串
+        private Vector2 _predictAngelPromptScrollPosition = Vector2.zero;
+        private Vector2 _predictDevilPromptScrollPosition = Vector2.zero;
+
+        private struct StreamingSentenceTask
+        {
+            public string EmotionTag;
+            public string SubtitleText;
+
+            public StreamingSentenceTask(string emotionTag, string subtitleText)
+            {
+                EmotionTag = emotionTag;
+                SubtitleText = subtitleText;
+            }
+        }
 
         // 默认人设
         private const string DefaultPersona = @"
@@ -191,7 +197,6 @@ namespace ChillAIMod
             
             // --- LLM 配置 ---
             _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
-            _useXnneHangLab = Config.Bind("1. LLM", "Use_XnneHangLab_Chat_Server", false, "使用 XnneHangLab /memory/chat");
             _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
                 "http://127.0.0.1:12393/memory/chat",
@@ -200,20 +205,18 @@ namespace ChillAIMod
             _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
             _logApiRequestBodyConfig = Config.Bind("1. LLM", "LogApiRequestBody", false,
                 "在日志中记录 API 请求体");
+            _hideApiKeyInUiConfig = Config.Bind("1. LLM", "HideApiKeyInUI", false,
+                "隐藏 API Key 输入框（录屏用）");
             _fixApiPathForThinkModeConfig = Config.Bind("1. LLM", "FixApiPathForThinkMode", true,
                 "指定深度思考模式时尝试改用 Ollama 原生 API 路径");
 
             // --- TTS 配置 ---
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
-            _TTSServicePathConfig = Config.Bind("2. TTS", "TTS_Service_Script_Path", @"D:\GPT-SoVITS\GPT-SoVITS-v2pro-20250604-nvidia50\run_api.bat", "TTS 服务脚本文件路径");
-            _LaunchTTSServiceConfig = Config.Bind("2. TTS", "LaunchTTSService", true, "启动时自动运行 TTS 服务");
-            _quitTTSServiceOnQuitConfig = Config.Bind("2. TTS", "QuitTTSServiceOnQuit", true, "退出时自动关闭 TTS 服务");
             _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
             _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", false, "从 Mod 侧检测音频文件路径");
             _promptTextConfig = Config.Bind("2. TTS", "Audio_File_Text", "君が集中した時のシータ波を検出して、リンクをつなぎ直せば元通りになるはず。", "音频文件台词");
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
             _targetLangConfig = Config.Bind("2. TTS", "TargetLang", "ja", "合成语音语言 (text_lang)");
-            _japaneseCheckConfig = Config.Bind("2. TTS", "JapaneseCheck", true, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）");
             _voiceVolumeConfig = Config.Bind("2. TTS", "VoiceVolume", 1.0f, "语音音量 (0.0 - 1.0)");
 
             // --- 界面配置 ---
@@ -242,16 +245,11 @@ namespace ChillAIMod
             _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
-                "DeepLX 翻译服务 URL（未勾选 XnneHangLab 时手动填写；勾选后由 Server 地址自动拼接）");
+                "DeepLX 翻译服务 URL（未启用 XnneHangLab Chat Server 时手动填写；启用后由 Server 地址自动拼接）");
             _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "ZH",
                 "翻译源语言（如 ZH=中文，JA=日文，EN=英文）");
             _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "JA",
                 "翻译目标语言（如 JA=日文，ZH=中文，EN=英文）");
-
-            // --- XnneHangLab Server base URL ---
-            _xnneHangLabBaseUrlConfig = Config.Bind("1. LLM", "XnneHangLab_Base_URL",
-                "http://127.0.0.1:12393",
-                "XnneHangLab Server 根地址（勾选 XnneHangLab 时生效，各端点由代码自动拼接）");
 
             // --- 新增：XnneHangLab Chat Server 独立配置 ---
             _useXnneHangLabChatServer = Config.Bind("6. XnneHangLab Chat", "Use_XnneHangLab_Chat_Server", false,
@@ -263,9 +261,12 @@ namespace ChillAIMod
                 "使用 XnneHangLab Chat Server 时禁用人设提示词（Chat Server 自行管理 System Prompt）");
 
             // --- 新增：预测对话配置 ---
-            _predictPromptConfig = Config.Bind("7. Predict", "Predict_Prompt",
-                "You are a helpful assistant that predicts user replies. Generate two different responses: one kind and supportive (小天使), one mischievous and playful (小恶魔).",
-                "预测对话 System Prompt");
+            _predictAngelPromptConfig = Config.Bind("7. Predict", "Predict_Angel_Prompt",
+                "You predict the user's next message. Output exactly one short, natural user-style sentence in a kind and supportive tone. No explanation, no JSON, no prefix.",
+                "小天使预测 System Prompt");
+            _predictDevilPromptConfig = Config.Bind("7. Predict", "Predict_Devil_Prompt",
+                "You predict the user's next message. Output exactly one short, natural user-style sentence in a playful and teasing tone. No explanation, no JSON, no prefix.",
+                "小恶魔预测 System Prompt");
             
             _enablePredictReply = Config.Bind("7. Predict", "Enable_Predict_Reply", false,
                 "启用自动预测回复（AI 回复后自动生成预选回复，复用 LLM 配置）");
@@ -291,24 +292,6 @@ namespace ChillAIMod
             _tempWidthString = _windowWidthConfig.Value.ToString("F0");
             _tempHeightString = _windowHeightConfig.Value.ToString("F0");
             _tempVolumeString = _voiceVolumeConfig.Value.ToString("F2");
-            string cleanPath = _TTSServicePathConfig.Value.Replace("\"", "").Trim();
-            if (_LaunchTTSServiceConfig.Value && File.Exists(_TTSServicePathConfig.Value))
-            {
-                try
-                {
-                    ProcessStartInfo startInfo = new ProcessStartInfo(cleanPath)
-                    {
-                        UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(cleanPath)
-                    };
-                    _launchedTTSProcess = Process.Start(startInfo);
-                    Log.Info("已启动 TTS 服务");
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"启动 TTS 服务失败: {ex.Message}");
-                }
-            }
             // 启动后台 TTS 健康检测
             if (_ttsHealthCheckCoroutine == null)
             {
@@ -554,27 +537,9 @@ namespace ChillAIMod
                 {
                     GUILayout.Space(5);
                     
-                    // 【API 提供商选择】两个选项互斥
+                    // 【API 提供商选择】
                     bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    bool newUseXnneHangLab = GUILayout.Toggle(_useXnneHangLab.Value, "使用 XnneHangLab /memory/chat", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    
-                    // 互斥逻辑：最多只能勾选一个
-                    if (newUseOllama && newUseXnneHangLab)
-                    {
-                        // 如果两个都被勾选，只保留最后点击的那个（这里通过判断哪个状态改变了来决定）
-                        if (_useOllama.Value == false)
-                        {
-                            newUseOllama = true;
-                            newUseXnneHangLab = false;
-                        }
-                        else
-                        {
-                            newUseOllama = false;
-                            newUseXnneHangLab = true;
-                        }
-                    }
                     _useOllama.Value = newUseOllama;
-                    _useXnneHangLab.Value = newUseXnneHangLab;
                     
                     // 【深度思考模式选项】
                     GUILayout.Space(5);
@@ -587,33 +552,22 @@ namespace ChillAIMod
                         _thinkModeConfig.Value = (ThinkMode)newMode;
                     }
 
-                    if (_useXnneHangLab.Value)
-                    {
-                        // XnneHangLab 模式：显示 base URL 输入框 + 各端点说明
-                        GUILayout.Label("XnneHangLab Server 地址：");
-                        _xnneHangLabBaseUrlConfig.Value = GUILayout.TextField(_xnneHangLabBaseUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                        GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
-                        endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
-                        Color prevC = GUI.color;
-                        GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
-                        GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
-                        GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
-                        GUI.color = prevC;
-                    }
-                    else
-                    {
-                        GUILayout.Label("API URL：");
-                        _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    }
+                    GUILayout.Label("API URL：");
+                    _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                    GUILayout.Space(5);
+                    _hideApiKeyInUiConfig.Value = GUILayout.Toggle(
+                        _hideApiKeyInUiConfig.Value,
+                        "隐藏 API Key 输入框（录屏用）",
+                        GUILayout.Height(elementHeight));
                     
-                    if (!_useOllama.Value && !_useXnneHangLab.Value) {
+                    if (!_useOllama.Value && !_hideApiKeyInUiConfig.Value) {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
                     
-                    // 模型名称：使用 XnneHangLab 時不顯示（不需要模型名稱配置）
-                    if (!_useXnneHangLab.Value)
+                    // 模型名称：仅在非 Ollama 模式下显示
+                    if (!_useOllama.Value)
                     {
                         GUILayout.Label("模型名称：");
                         _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -644,12 +598,6 @@ namespace ChillAIMod
                     GUILayout.Label("TTS 服务 URL：");
                     _sovitsUrlConfig.Value = GUILayout.TextField(_sovitsUrlConfig.Value);
 
-                    GUILayout.Label("TTS 服务脚本文件路径：");
-                    _TTSServicePathConfig.Value = GUILayout.TextField(_TTSServicePathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-
-                    GUILayout.Space(5);
-                    _LaunchTTSServiceConfig.Value = GUILayout.Toggle(_LaunchTTSServiceConfig.Value, "启动时自动运行 TTS 服务", GUILayout.Height(elementHeight));
-                    _quitTTSServiceOnQuitConfig.Value = GUILayout.Toggle(_quitTTSServiceOnQuitConfig.Value, "退出时自动关闭 TTS 服务", GUILayout.Height(elementHeight));
                     GUILayout.Label("GSV 访问音频文件的路径（可以是相对路径）：");
                     // 路径通常很长，必须加 MinWidth(50f)
                     _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -666,10 +614,7 @@ namespace ChillAIMod
                     
                     GUILayout.Label("合成语音语言 (text_lang):");
                     _targetLangConfig.Value = GUILayout.TextField(_targetLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    
-                    GUILayout.Space(5);
-                    _japaneseCheckConfig.Value = GUILayout.Toggle(_japaneseCheckConfig.Value, "检测合成语音文本是否为日文（当合成语音语言为 ja 时可防止发出怪声）", GUILayout.Height(elementHeight));
-                    
+
                     GUILayout.Space(5);
 
                     GUILayout.Label($"语音音量：{_voiceVolumeConfig.Value:F2}");
@@ -833,7 +778,7 @@ namespace ChillAIMod
 
                 // ================= XnneHangLab Chat Server 配置区域 =================
                 GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
-                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server" : "▶️ XnneHangLab Chat Server";
+                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server 设置" : "▶️ XnneHangLab Chat Server 设置";
                 if (GUILayout.Button(xnneChatBtnText, GUILayout.Height(elementHeight)))
                 {
                     _showXnneHangLabChatSettings = !_showXnneHangLabChatSettings;
@@ -931,21 +876,24 @@ namespace ChillAIMod
                     }
                     
                     GUILayout.Space(5);
-                    
-                    GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                    infoStyle.wordWrap = true;
-                    Color prevC = GUI.color;
-                    GUI.color = new Color(1f, 0.9f, 0.7f);
-                    GUILayout.Label("⚠️ 此功能正在开发中（下一个 PR 实现）", infoStyle);
-                    GUILayout.Label("功能说明：利用无状态大模型 + 简单 System Prompt 预测用户回复，生成\"小天使\"与\"小恶魔\"两个风格的预选回复供用户选择。", infoStyle);
-                    GUI.color = prevC;
-                    
+                    GUILayout.Label("小天使预测 System Prompt：");
+                    _predictAngelPromptScrollPosition = GUILayout.BeginScrollView(
+                        _predictAngelPromptScrollPosition,
+                        GUILayout.Height(elementHeight * 4));
+                    _predictAngelPromptConfig.Value = GUILayout.TextArea(
+                        _predictAngelPromptConfig.Value,
+                        GUILayout.ExpandHeight(true));
+                    GUILayout.EndScrollView();
+
                     GUILayout.Space(5);
-                    GUILayout.Label("预测对话 System Prompt：");
-                    _predictPromptConfig.Value = GUILayout.TextArea(
-                        _predictPromptConfig.Value,
-                        GUILayout.Height(elementHeight * 4),
-                        GUILayout.MinWidth(50f));
+                    GUILayout.Label("小恶魔预测 System Prompt：");
+                    _predictDevilPromptScrollPosition = GUILayout.BeginScrollView(
+                        _predictDevilPromptScrollPosition,
+                        GUILayout.Height(elementHeight * 4));
+                    _predictDevilPromptConfig.Value = GUILayout.TextArea(
+                        _predictDevilPromptConfig.Value,
+                        GUILayout.ExpandHeight(true));
+                    GUILayout.EndScrollView();
                     
                     GUILayout.Space(5);
                 }
@@ -980,7 +928,7 @@ namespace ChillAIMod
 
                     GUILayout.Space(5);
 
-                    if (_useXnneHangLab.Value)
+                    if (_useXnneHangLabChatServer.Value)
                     {
                         // XnneHangLab 模式：DeepLX 由 Server 托管，不需要手动填 URL
                         GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
@@ -1240,6 +1188,12 @@ namespace ChillAIMod
             }
         }
 
+        private void BringOverlayToFront(Text text)
+        {
+            if (text == null || text.transform == null) return;
+            text.transform.SetAsLastSibling();
+        }
+
         IEnumerator AIProcessRoutine(string prompt)
         {
             _isProcessing = true;
@@ -1256,6 +1210,7 @@ namespace ChillAIMod
             originalTextObj.SetActive(false);
             GameObject myTextObj = UIHelper.CreateOverlayText(parentObj);
             Text myText = myTextObj.GetComponent<Text>();
+            BringOverlayToFront(myText);
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
@@ -1281,7 +1236,7 @@ namespace ChillAIMod
                 SystemPrompt = systemPromptToSend,
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
-                UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLab = false,
                 UseXnneHangLabChatServer = useChatServer, // 新增字段
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
@@ -1307,7 +1262,7 @@ namespace ChillAIMod
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     // 暫時用 ExtractContentRegex 解析 content 字段，保持邏輯一致性
                     // TODO: 以後改用 JsonUtility 直接解析
-                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
+                    if (requestContext.UseXnneHangLabChatServer)
                     {
                         fullResponse = ResponseParser.ExtractContentRegex(rawResponse);
                     }
@@ -1336,6 +1291,7 @@ namespace ChillAIMod
                 if (errCode == 404) errMsg += "\n(模型名称或 URL 错误)";
 
                 myText.text = errMsg;
+                BringOverlayToFront(myText);
                 myText.color = Color.red;
 
                 // 让错误信息在屏幕上停留 3 秒，让玩家看清楚
@@ -1359,15 +1315,11 @@ namespace ChillAIMod
                 AddToMemorySystem("User", prompt);
                 AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
-                // 只有当 voiceText 不为空，且看起来像是日语时，才请求 TTS
-                // 简单的日语检测：看是否包含假名 (Hiragana/Katakana)
-                // 这是一个可选的保险措施
-                bool isJapanese = _japaneseCheckConfig.Value ? Regex.IsMatch(voiceText, @"[぀-ゟ゠-ヿ]") : true;
-                Log.Info($"isJapanese: {isJapanese} (japaneseCheck: {_japaneseCheckConfig.Value})");
-
-                if (!string.IsNullOrEmpty(voiceText) && isJapanese)
+                // 仅在 voiceText 非空时请求 TTS，不再按日文内容做拦截
+                if (!string.IsNullOrEmpty(voiceText))
                 {
                     myText.text = "message is sending through cyber space";
+                    BringOverlayToFront(myText);
                     
                     // 【关键判断】仅在 TTS 服务就绪时启用流式断句播放
                     if (_isTTSServiceReady)
@@ -1375,6 +1327,7 @@ namespace ChillAIMod
                         // 流式 TTS 模式：断句 + 异步生成 + 逐句播放
                         Log.Info("[TTS] 服务就绪，启用流式断句播放");
                         yield return StartCoroutine(PlayStreamingTTS(
+                            fullResponse,
                             voiceText,
                             subtitleText,
                             emotionTag,
@@ -1417,6 +1370,7 @@ namespace ChillAIMod
                             // 【应用换行】在将字幕文本显示到 UI 之前，强制插入换行符
                             subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
                             myText.text = subtitleText;
+                            BringOverlayToFront(myText);
                             myText.color = Color.white;
 
                             // 正常播放
@@ -1425,9 +1379,11 @@ namespace ChillAIMod
                         else
                         {
                             myText.text = "Voice Failed (TTS Error)";
+                            BringOverlayToFront(myText);
                             // 语音失败时，至少做个动作显示字幕
                             subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
                             myText.text = subtitleText;
+                            BringOverlayToFront(myText);
                             yield return StartCoroutine(PlayNativeAnimation(emotionTag, null)); // 传 null 进去
                         }
                     }
@@ -1435,11 +1391,11 @@ namespace ChillAIMod
                 else
                 {
                     // 【静音模式】
-                    // 如果格式错了，或者不是日语，我们就只显示字幕、做动作，不发声音
-                    // 这样比听到 AI 用奇怪的调子读中文要好得多
-                    Log.Warning("跳过 TTS：文本为空或非日语");
+                    // 如果格式错了或文本为空，我们就只显示字幕、做动作，不发声音
+                    Log.Warning("跳过 TTS：文本为空");
 
                     myText.text = subtitleText;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
 
                     // 修改 PlayNativeAnimation 支持无音频模式 (见下方)
@@ -1469,7 +1425,78 @@ namespace ChillAIMod
         /// 仅在 TTS 服务就绪时调用
         /// 工作流：中文字幕分句 → 字幕直接入队显示 → DeepLX(ZH→JA) → 日文送 TTS
         /// </summary>
+        List<StreamingSentenceTask> BuildStreamingSentenceTasks(
+            string rawResponse,
+            string fallbackVoiceText,
+            string fallbackSubtitleText,
+            string defaultEmotionTag)
+        {
+            var tasks = new List<StreamingSentenceTask>();
+            string safeDefaultEmotion = string.IsNullOrWhiteSpace(defaultEmotionTag) ? "Think" : defaultEmotionTag.Trim();
+
+            // 优先按 [Emotion] ||| 分块，支持一次回复多个动作段。
+            if (!string.IsNullOrWhiteSpace(rawResponse))
+            {
+                var tagMatches = System.Text.RegularExpressions.Regex.Matches(
+                    rawResponse,
+                    @"\[(?<emotion>[^\]\r\n]+)\]\s*\|\|\|\s*",
+                    System.Text.RegularExpressions.RegexOptions.Multiline);
+
+                if (tagMatches.Count > 0)
+                {
+                    for (int i = 0; i < tagMatches.Count; i++)
+                    {
+                        string emotion = tagMatches[i].Groups["emotion"].Value.Trim();
+                        if (string.IsNullOrWhiteSpace(emotion))
+                            emotion = safeDefaultEmotion;
+
+                        int start = tagMatches[i].Index + tagMatches[i].Length;
+                        int end = (i + 1 < tagMatches.Count) ? tagMatches[i + 1].Index : rawResponse.Length;
+                        int len = end - start;
+                        if (len <= 0) continue;
+
+                        string chunkText = rawResponse.Substring(start, len).Trim();
+                        chunkText = ResponseParser.StripEmotionPrefix(chunkText);
+                        if (string.IsNullOrWhiteSpace(chunkText)) continue;
+
+                        string[] splitSentences = ResponseParser.SplitByChinesePunctuation(chunkText);
+                        if (splitSentences.Length == 0)
+                        {
+                            tasks.Add(new StreamingSentenceTask(emotion, chunkText));
+                        }
+                        else
+                        {
+                            foreach (string sentence in splitSentences)
+                            {
+                                if (!string.IsNullOrWhiteSpace(sentence))
+                                    tasks.Add(new StreamingSentenceTask(emotion, sentence.Trim()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (tasks.Count > 0)
+                return tasks;
+
+            // 回退：沿用原逻辑（按 subtitle 断句，全部使用默认动作）。
+            fallbackSubtitleText = ResponseParser.StripEmotionPrefix(fallbackSubtitleText);
+            fallbackVoiceText = ResponseParser.StripEmotionPrefix(fallbackVoiceText);
+            string[] fallbackSentences = ResponseParser.SplitByChinesePunctuation(fallbackSubtitleText);
+            if (fallbackSentences.Length == 0 && !string.IsNullOrWhiteSpace(fallbackVoiceText))
+                fallbackSentences = new string[] { fallbackVoiceText };
+
+            foreach (string sentence in fallbackSentences)
+            {
+                if (!string.IsNullOrWhiteSpace(sentence))
+                    tasks.Add(new StreamingSentenceTask(safeDefaultEmotion, sentence.Trim()));
+            }
+
+            return tasks;
+        }
+
         IEnumerator PlayStreamingTTS(
+            string rawResponse,
             string fullVoiceText,
             string fullSubtitleText,
             string emotionTag,
@@ -1485,25 +1512,24 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
-            // 0. 防御性剥离：去掉 [Emotion] ||| 前缀，确保送 TTS/DeepLX 的文本干净
-            fullSubtitleText = ResponseParser.StripEmotionPrefix(fullSubtitleText);
-            fullVoiceText = ResponseParser.StripEmotionPrefix(fullVoiceText);
-
-            // 1. 按中文标点断句（字幕文本）
-            string[] sentences = ResponseParser.SplitByChinesePunctuation(fullSubtitleText);
-            
-            // 如果没有有效句子，回退到完整文本
-            if (sentences.Length == 0)
+            // 0. 构建逐句任务（每句包含 emotion + 字幕文本）
+            List<StreamingSentenceTask> sentences = BuildStreamingSentenceTasks(
+                rawResponse,
+                fullVoiceText,
+                fullSubtitleText,
+                emotionTag);
+            if (sentences.Count == 0)
             {
-                Log.Warning("[流式 TTS] 断句失败，回退到完整文本模式");
-                sentences = new string[] { fullVoiceText };
+                Log.Warning("[流式 TTS] 无可播放句子，提前结束");
+                yield break;
             }
-            
-            Log.Info($"[流式 TTS] 断句完成，共 {sentences.Length} 句");
+
+            Log.Info($"[流式 TTS] 断句完成，共 {sentences.Count} 句");
             
             // 2. 队列管理
             Queue<AudioClip> audioQueue = new Queue<AudioClip>();
             Queue<string> subtitleQueue = new Queue<string>();
+            Queue<string> emotionQueue = new Queue<string>();
             
             // 3. 启动后台 TTS+ 翻译生成协程
             StartCoroutine(TTSWithTranslationGeneratorLoop(
@@ -1516,6 +1542,7 @@ namespace ChillAIMod
                 audioPathCheck,
                 audioQueue,
                 subtitleQueue,
+                emotionQueue,
                 enableTranslation,
                 deeplxUrl,
                 sourceLang,
@@ -1523,8 +1550,8 @@ namespace ChillAIMod
             ));
             
             // 4. 播放循环
-            int sentenceIndex = 0;
-            foreach (var sentence in sentences)
+            string lastPlayedEmotion = null;
+            for (int sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
             {
                 // 中断检查
                 if (_isInterrupted)
@@ -1532,25 +1559,32 @@ namespace ChillAIMod
                     Log.Info("[流式 TTS] 收到中断信号，停止播放");
                     audioQueue.Clear();
                     subtitleQueue.Clear();
+                    emotionQueue.Clear();
                     break;
                 }
 
                 // 等待队列里有音频（等待期间也检查中断）
-                while (audioQueue.Count == 0)
+                while (audioQueue.Count == 0 || subtitleQueue.Count == 0 || emotionQueue.Count == 0)
                 {
                     if (_isInterrupted)
                     {
                         Log.Info("[流式 TTS] 等待期间收到中断信号，停止播放");
                         audioQueue.Clear();
                         subtitleQueue.Clear();
+                        emotionQueue.Clear();
                         yield break;
                     }
-                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Length})";
+                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Count})";
+                    BringOverlayToFront(myText);
                     yield return null;
                 }
                 
                 AudioClip clip = audioQueue.Dequeue();
                 string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
+                string sentenceEmotion = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : emotionTag;
+                if (string.IsNullOrWhiteSpace(sentenceEmotion)) sentenceEmotion = "Think";
+                bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
+                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
                 
                 if (clip != null)
                 {
@@ -1559,22 +1593,35 @@ namespace ChillAIMod
                     
                     // 显示字幕（逐句）
                     myText.text = subtitle;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
                     
-                    // 播放语音 + 动作（PlayNativeAnimation 内部会等播放完，中断后不再进入下一句）
-                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, clip));
+                    if (shouldSwitchEmotion)
+                    {
+                        // emotion 变化时才切动作，避免同动作重复触发导致抽搐。
+                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
+                    }
+                    else
+                    {
+                        // emotion 不变：只播音频，不重复切动作。
+                        yield return StartCoroutine(PlayAudioWithoutEmotionSwitch(clip));
+                    }
                 }
                 else
                 {
                     Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
                     myText.text = subtitle;
+                    BringOverlayToFront(myText);
                     myText.color = Color.white;
-                    yield return StartCoroutine(PlayNativeAnimation(emotionTag, null));
+                    if (shouldSwitchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
+                    else
+                        yield return new WaitForSecondsRealtime(0.1f);
                 }
-                
-                sentenceIndex++;
+                lastPlayedEmotion = sentenceEmotion;
             }
             
+            HandlePendingPredictResultAfterTTS();
             Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
         }
 
@@ -1582,7 +1629,7 @@ namespace ChillAIMod
         /// 后台 TTS+ 翻译生成循环：逐句生成 TTS + DeepLX 翻译
         /// </summary>
         IEnumerator TTSWithTranslationGeneratorLoop(
-            string[] sentences,
+            List<StreamingSentenceTask> sentences,
             string ttsBaseUrl,
             string targetLang,
             string refAudioPath,
@@ -1591,24 +1638,26 @@ namespace ChillAIMod
             bool audioPathCheck,
             Queue<AudioClip> audioQueue,
             Queue<string> subtitleQueue,
+            Queue<string> emotionQueue,
             bool enableTranslation,
             string deeplxUrl,
             string sourceLang,
             string translateTargetLang)
         {
-            for (int i = 0; i < sentences.Length; i++)
+            for (int i = 0; i < sentences.Count; i++)
             {
                 // 中断检查：停止生成剩余句子
                 if (_isInterrupted)
                 {
-                    Log.Info($"[TTS 生成] 收到中断信号，停止生成（已完成 {i}/{sentences.Length} 句）");
+                    Log.Info($"[TTS 生成] 收到中断信号，停止生成（已完成 {i}/{sentences.Count} 句）");
                     yield break;
                 }
 
+                string sentenceEmotion = string.IsNullOrWhiteSpace(sentences[i].EmotionTag) ? "Think" : sentences[i].EmotionTag.Trim();
                 // 防御性清洗：即使上游解析异常，也不让 [Emotion] ||| 标签流入翻译/TTS。
-                string originalText = ResponseParser.StripEmotionPrefix(sentences[i]);  // 中文原文（字幕用）
+                string originalText = ResponseParser.StripEmotionPrefix(sentences[i].SubtitleText);  // 中文原文（字幕用）
                 if (string.IsNullOrWhiteSpace(originalText))
-                    originalText = sentences[i].Trim();
+                    originalText = sentences[i].SubtitleText.Trim();
                 string ttsText = originalText;       // TTS 用文本，默认用原文兜底
                 
                 // 如果启用翻译，先请求 DeepLX 翻译（中文→日文），翻译结果送 TTS
@@ -1627,16 +1676,17 @@ namespace ChillAIMod
                     if (!string.IsNullOrEmpty(translatedText))
                     {
                         ttsText = translatedText;  // 翻译成功：日文送 TTS
-                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译成功：{originalText} → {ttsText}");
+                        Log.Info($"[翻译] 第 {i + 1}/{sentences.Count} 句翻译成功：{originalText} → {ttsText}");
                     }
                     else
                     {
-                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Length} 句翻译失败，TTS 使用中文原文兜底");
+                        Log.Warning($"[翻译] 第 {i + 1}/{sentences.Count} 句翻译失败，TTS 使用中文原文兜底");
                     }
                 }
                 
                 // 字幕显示中文原文（带换行处理）
                 subtitleQueue.Enqueue(ResponseParser.InsertLineBreaks(originalText, 25));
+                emotionQueue.Enqueue(sentenceEmotion);
                 
                 // 生成 TTS 语音（使用翻译后的日文，或原文兜底）
                 AudioClip clip = null;
@@ -1655,11 +1705,11 @@ namespace ChillAIMod
                 
                 if (clip != null)
                 {
-                    Log.Info($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句生成成功");
+                    Log.Info($"[TTS+ 翻译] 第 {i + 1}/{sentences.Count} 句生成成功");
                 }
                 else
                 {
-                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Length} 句 TTS 生成失败");
+                    Log.Warning($"[TTS+ 翻译] 第 {i + 1}/{sentences.Count} 句 TTS 生成失败");
                 }
                 
                 audioQueue.Enqueue(clip);
@@ -1761,6 +1811,42 @@ namespace ChillAIMod
                 yield return isReady ? waitLong : waitShort;
             }
         }
+
+        IEnumerator PlayAudioWithoutEmotionSwitch(AudioClip voiceClip)
+        {
+            if (voiceClip == null)
+            {
+                yield return new WaitForSecondsRealtime(0.1f);
+                HandlePendingPredictResultAfterTTS();
+                yield break;
+            }
+
+            float clipDuration = voiceClip.length;
+            _isAISpeaking = true;
+            _audioSource.clip = voiceClip;
+            _audioSource.Play();
+
+            // 保持和 PlayNativeAnimation 一致的播放缓冲。
+            yield return new WaitForSecondsRealtime(clipDuration + 0.5f);
+
+            if (_audioSource != null && _audioSource.isPlaying)
+            {
+                Log.Warning("等待结束，强制停止语音播放");
+                _audioSource.Stop();
+            }
+            _isAISpeaking = false;
+
+            HandlePendingPredictResultAfterTTS();
+        }
+
+        private void HandlePendingPredictResultAfterTTS()
+        {
+            if (!_pendingPredictResult) return;
+            _pendingPredictResult = false;
+            _showPredictedReplies = true;
+            StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
+            Log.Info("[预测回复] TTS 播放完成，显示预测结果");
+        }
         
         IEnumerator PlayNativeAnimation(string emotion, AudioClip voiceClip)
         {
@@ -1842,15 +1928,8 @@ namespace ChillAIMod
             }
             GameBridge.RestoreLookAt();
             _isAISpeaking = false;
-            
-            // TTS 播放完成，检查是否有待显示的预测结果
-            if (_pendingPredictResult)
-            {
-                _pendingPredictResult = false;
-                _showPredictedReplies = true;
-                StartCoroutine(ShowDebugLog($"[预测] TTS 完成，显示预测结果：{_predictedAngelReply.Length}字 / {_predictedDevilReply.Length}字"));
-                Log.Info("[预测回复] TTS 播放完成，显示预测结果");
-            }
+
+            HandlePendingPredictResultAfterTTS();
         }
 
         // ================= 【新增录音控制】 =================
@@ -1950,18 +2029,6 @@ namespace ChillAIMod
                 StopCoroutine(_deeplxHealthCheckCoroutine);
                 _deeplxHealthCheckCoroutine = null;
             }
-            if (_quitTTSServiceOnQuitConfig.Value && _launchedTTSProcess != null && !_launchedTTSProcess.HasExited)
-            {   
-                try
-                {
-                    ProcessHelper.KillProcessTree(_launchedTTSProcess);
-                    Log.Info("TTS 服务已关闭");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning($"关闭 TTS 服务时出错: {ex.Message}");
-                }
-            }
         }
 
         // ================= 【中断 & URL 辅助方法】 =================
@@ -1971,8 +2038,8 @@ namespace ChillAIMod
         /// </summary>
         private string GetDeepLXUrl()
         {
-            if (_useXnneHangLab.Value)
-                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/translate/deeplx";
+            if (_useXnneHangLabChatServer.Value)
+                return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/translate/deeplx";
             return _deeplxUrlConfig.Value;
         }
 
@@ -1985,10 +2052,6 @@ namespace ChillAIMod
             if (_useXnneHangLabChatServer.Value)
                 return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/memory/chat";
             
-            // 兼容旧配置
-            if (_useXnneHangLab.Value)
-                return _xnneHangLabBaseUrlConfig.Value.TrimEnd('/') + "/memory/chat";
-            
             return _chatApiUrlConfig.Value;
         }
 
@@ -1997,12 +2060,9 @@ namespace ChillAIMod
         /// </summary>
         IEnumerator PostInterruptSignal()
         {
-            // 新增：支持独立的 XnneHangLab Chat Server 配置
-            if (!_useXnneHangLabChatServer.Value && !_useXnneHangLab.Value) yield break;
+            if (!_useXnneHangLabChatServer.Value) yield break;
 
-            string baseUrl = _useXnneHangLabChatServer.Value 
-                ? _xnneHangLabChatBaseUrl.Value 
-                : _xnneHangLabBaseUrlConfig.Value;
+            string baseUrl = _xnneHangLabChatBaseUrl.Value;
             
             string url = baseUrl.TrimEnd('/') + "/memory/interrupt";
             Log.Info($"[中断] 发送 POST {url}");
@@ -2041,6 +2101,7 @@ namespace ChillAIMod
             // 创建临时字幕
             GameObject debugTextObj = UIHelper.CreateOverlayText(parentObj);
             Text debugText = debugTextObj.GetComponent<Text>();
+            BringOverlayToFront(debugText);
             
             // 显示日志
             debugText.text = message;
@@ -2068,24 +2129,105 @@ namespace ChillAIMod
             StartCoroutine(ShowDebugLog("[预测] 开始生成预测..."));
             Log.Info("[预测回复] 开始生成预测...");
 
-            // 构建预测请求（复用 LLM 配置 + 上下文）
             string contextPrompt = BuildContextPrompt();
-            string fullUserPrompt = contextPrompt + "Based on this conversation, predict the user's next reply. Generate TWO different responses (JSON format):\n{\n  \"angel\": \"kind and supportive reply\",\n  \"devil\": \"mischievous and playful reply\"\n}\n\nLast AI response: " + aiLastResponse;
-            
+            string fullUserPrompt = BuildPredictUserPrompt(contextPrompt, aiLastResponse);
+
+            string angelReply = "";
+            string devilReply = "";
+            bool angelSuccess = false;
+            bool devilSuccess = false;
+
+            // 小天使：单独请求，单独提示词
+            yield return StartCoroutine(RequestPredictedReply(
+                "PredictAngel",
+                _predictAngelPromptConfig.Value,
+                fullUserPrompt,
+                (reply, ok) =>
+                {
+                    angelReply = reply;
+                    angelSuccess = ok;
+                }));
+
+            // 小恶魔：单独请求，单独提示词
+            yield return StartCoroutine(RequestPredictedReply(
+                "PredictDevil",
+                _predictDevilPromptConfig.Value,
+                fullUserPrompt,
+                (reply, ok) =>
+                {
+                    devilReply = reply;
+                    devilSuccess = ok;
+                }));
+
+            if (angelSuccess || devilSuccess)
+            {
+                _predictedAngelReply = angelReply;
+                _predictedDevilReply = devilReply;
+
+                if (_isAISpeaking)
+                {
+                    _pendingPredictResult = true;
+                    StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angelReply.Length}字 / {devilReply.Length}字，等待 TTS 完成后显示"));
+                    Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
+                }
+                else
+                {
+                    _showPredictedReplies = true;
+                    StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angelReply.Length}字 / {devilReply.Length}字"));
+                    Log.Info("[预测回复] 预测完成并显示");
+                }
+            }
+            else
+            {
+                StartCoroutine(ShowDebugLog("[预测] 两次请求都失败，未显示预选回复"));
+            }
+
+            _isPredicting = false;
+        }
+
+        /// <summary>
+        /// 构建预测请求 UserPrompt（两次请求复用同一上下文）
+        /// </summary>
+        private string BuildPredictUserPrompt(string contextPrompt, string aiLastResponse)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (!string.IsNullOrEmpty(contextPrompt))
+            {
+                sb.Append(contextPrompt);
+                if (!contextPrompt.EndsWith("\n"))
+                    sb.AppendLine();
+            }
+
+            sb.AppendLine("Task: Predict the user's next message as ONE short chat sentence.");
+            sb.AppendLine("Reply with sentence only. No JSON, no label, no explanation.");
+            sb.AppendLine("Last AI response:");
+            sb.AppendLine(aiLastResponse ?? "");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 单次预测请求：返回提取后的纯文本 content
+        /// </summary>
+        private IEnumerator RequestPredictedReply(
+            string logHeader,
+            string systemPrompt,
+            string userPrompt,
+            Action<string, bool> onComplete)
+        {
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = _chatApiUrlConfig.Value,
                 ApiKey = _apiKeyConfig.Value,
                 ModelName = _modelConfig.Value,
-                SystemPrompt = _predictPromptConfig.Value,
-                UserPrompt = fullUserPrompt,
+                SystemPrompt = systemPrompt,
+                UserPrompt = userPrompt,
                 UseLocalOllama = _useOllama.Value,
                 UseXnneHangLab = false,
                 UseXnneHangLabChatServer = false,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = ThinkMode.Default,
                 HierarchicalMemory = null,
-                LogHeader = "PredictReply",
+                LogHeader = logHeader,
                 FixApiPathForThinkMode = false,
                 EnableTranslation = false,
                 DeepLXUrl = "",
@@ -2104,194 +2246,65 @@ namespace ChillAIMod
                 },
                 (errorMsg, responseCode) =>
                 {
-                    StartCoroutine(ShowDebugLog($"[预测] API 错误：{errorMsg}"));
-                    Log.Warning($"[预测回复] API 错误：{errorMsg} (Code: {responseCode})");
+                    StartCoroutine(ShowDebugLog($"[预测] {logHeader} API 错误：{errorMsg}"));
+                    Log.Warning($"[预测回复] {logHeader} API 错误：{errorMsg} (Code: {responseCode})");
                     success = false;
                 }
             );
 
-            if (success && !string.IsNullOrEmpty(rawResponse))
+            if (!success || string.IsNullOrEmpty(rawResponse))
             {
-                // 先从 OpenAI 格式响应中提取 content 字段
-                string content = ExtractContentFromResponse(rawResponse);
-                StartCoroutine(ShowDebugLog($"[预测] 提取 content: {content.Length}字"));
-                
-                // 解析 angel/devil
-                var (angel, devil) = ParsePredictedReplies(content);
-                
-                if (!string.IsNullOrEmpty(angel) || !string.IsNullOrEmpty(devil))
-                {
-                    _predictedAngelReply = angel;
-                    _predictedDevilReply = devil;
-                    
-                    if (_isAISpeaking)
-                    {
-                        _pendingPredictResult = true;
-                        StartCoroutine(ShowDebugLog($"[预测] 生成完成：{angel.Length}字 / {devil.Length}字，等待 TTS 完成后显示"));
-                        Log.Info("[预测回复] TTS 播放中，等待播放完成后显示");
-                    }
-                    else
-                    {
-                        _showPredictedReplies = true;
-                        StartCoroutine(ShowDebugLog($"[预测] 生成完成并显示：{angel.Length}字 / {devil.Length}字"));
-                        Log.Info("[预测回复] 预测完成并显示");
-                    }
-                }
+                onComplete?.Invoke("", false);
+                yield break;
             }
 
-            _isPredicting = false;
+            string content = ExtractPredictContent(rawResponse);
+            if (string.IsNullOrEmpty(content))
+            {
+                onComplete?.Invoke("", false);
+                yield break;
+            }
+
+            StartCoroutine(ShowDebugLog($"[预测] {logHeader} 提取 content: {content.Length}字"));
+            onComplete?.Invoke(content, true);
         }
 
         /// <summary>
-        /// 从 OpenAI 格式响应中提取 content 字段
-        /// 示例输入：{"choices":[{"message":{"content":"{\\n  \\"angel\\": \\"...\\",\\n  \\"devil\\": \\"...\\",\\n}"}}]}
-        /// 示例输出：{\n  "angel": "...",\n  "devil": "...",\n}
+        /// 从模型响应里提取预测文本（只取 content/reply/message）
         /// </summary>
-        private string ExtractContentFromResponse(string openaiResponse)
+        private string ExtractPredictContent(string rawResponse)
         {
-            // 查找 "content" 关键字
-            int contentKeyIdx = openaiResponse.IndexOf("\"content\"");
-            if (contentKeyIdx < 0)
-            {
-                Log.Warning("[提取 Content] 未找到 content 字段");
-                return openaiResponse;
-            }
-            
-            // 找到 content: 后面的第一个引号
-            int colonIdx = openaiResponse.IndexOf(":", contentKeyIdx);
-            if (colonIdx < 0)
-            {
-                Log.Warning("[提取 Content] 未找到冒号");
-                return openaiResponse;
-            }
-            
-            // 跳过冒号后的空格和引号
-            int contentStart = colonIdx + 1;
-            while (contentStart < openaiResponse.Length && 
-                   (openaiResponse[contentStart] == ' ' || openaiResponse[contentStart] == '"'))
-            {
-                contentStart++;
-            }
-            
-            // 从 contentStart 开始，找到最后一个 } 之前的位置
-            // 因为 content 的内容是一个完整的 JSON 对象 {...}
-            int braceCount = 0;
-            int contentEnd = contentStart;
-            bool foundFirstBrace = false;
-            
-            for (int i = contentStart; i < openaiResponse.Length; i++)
-            {
-                char c = openaiResponse[i];
-                if (c == '{')
-                {
-                    braceCount++;
-                    foundFirstBrace = true;
-                }
-                else if (c == '}')
-                {
-                    braceCount--;
-                    if (foundFirstBrace && braceCount == 0)
-                    {
-                        contentEnd = i + 1;
-                        break;
-                    }
-                }
-            }
-            
-            if (contentEnd <= contentStart)
-            {
-                Log.Warning($"[提取 Content] 未找到完整内容 (start={contentStart}, end={contentEnd})");
-                return openaiResponse;
-            }
-            
-            string content = openaiResponse.Substring(contentStart, contentEnd - contentStart);
-            
-            // 处理转义：将 \n 转为换行，\" 转为引号
-            content = content.Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\\\", "\\");
-            
-            Log.Info($"[提取 Content] 成功，长度={content.Length}");
+            if (string.IsNullOrEmpty(rawResponse))
+                return "";
+
+            string content = ResponseParser.ExtractJsonValue(rawResponse, "content");
+            if (string.IsNullOrEmpty(content))
+                content = ResponseParser.ExtractJsonValue(rawResponse, "reply");
+            if (string.IsNullOrEmpty(content))
+                content = ResponseParser.ExtractJsonValue(rawResponse, "message");
+            if (string.IsNullOrEmpty(content))
+                content = rawResponse;
+
+            content = content.Replace("\r", " ").Replace("\n", " ").Trim();
+            content = content.Trim('"', '\'', ' ', '\t');
+            content = StripPredictLabelPrefix(content, "小天使");
+            content = StripPredictLabelPrefix(content, "小恶魔");
+            content = StripPredictLabelPrefix(content, "小惡魔");
+            content = StripPredictLabelPrefix(content, "angel");
+            content = StripPredictLabelPrefix(content, "devil");
+            return content.Trim();
+        }
+
+        private string StripPredictLabelPrefix(string content, string label)
+        {
+            if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(label))
+                return content;
+
+            if (content.StartsWith(label + "：", StringComparison.OrdinalIgnoreCase))
+                return content.Substring(label.Length + 1).Trim();
+            if (content.StartsWith(label + ":", StringComparison.OrdinalIgnoreCase))
+                return content.Substring(label.Length + 1).Trim();
             return content;
-        }
-
-        /// <summary>
-        /// 解析预测回复的 JSON 响应
-        /// </summary>
-        private (string angel, string devil) ParsePredictedReplies(string jsonResponse)
-        {
-            try
-            {
-                jsonResponse = jsonResponse.Trim();
-                string angel = "";
-                string devil = "";
-                
-                int angelIdx = jsonResponse.IndexOf("\"angel\"");
-                if (angelIdx >= 0)
-                {
-                    int colonIdx = jsonResponse.IndexOf(":", angelIdx);
-                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
-                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
-                    if (quoteStart > 0 && quoteEnd > quoteStart)
-                    {
-                        angel = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
-                    }
-                }
-                
-                int devilIdx = jsonResponse.IndexOf("\"devil\"");
-                if (devilIdx >= 0)
-                {
-                    int colonIdx = jsonResponse.IndexOf(":", devilIdx);
-                    int quoteStart = jsonResponse.IndexOf("\"", colonIdx) + 1;
-                    int quoteEnd = jsonResponse.IndexOf("\"", quoteStart);
-                    if (quoteStart > 0 && quoteEnd > quoteStart)
-                    {
-                        devil = jsonResponse.Substring(quoteStart, quoteEnd - quoteStart);
-                    }
-                }
-                
-                if (string.IsNullOrEmpty(angel) && string.IsNullOrEmpty(devil))
-                {
-                    if (jsonResponse.Contains("小天使") && jsonResponse.Contains("小恶魔"))
-                    {
-                        string[] parts = jsonResponse.Split(new string[] { "小恶魔" }, System.StringSplitOptions.None);
-                        if (parts.Length >= 2)
-                        {
-                            angel = parts[0].Replace("小天使", "").Trim(':', '：', ' ');
-                            devil = parts[1].Trim(':', '：', ' ');
-                        }
-                    }
-                }
-                
-                // 清理 JSON 残留符号
-                angel = CleanJsonArtifacts(angel);
-                devil = CleanJsonArtifacts(devil);
-                
-                return (angel, devil);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning($"[预测回复] JSON 解析失败：{ex.Message}");
-                return ("", "");
-            }
-        }
-
-        /// <summary>
-        /// 清理 JSON 残留符号（{, }, "", : 等）
-        /// </summary>
-        private string CleanJsonArtifacts(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            
-            // 移除开头和结尾的 JSON 符号
-            text = text.TrimStart('{', ' ', '\n', '\t', '"');
-            text = text.TrimEnd('}', ' ', '\n', '\t', '"');
-            
-            // 移除开头的 ": " 或 "": "
-            while (text.StartsWith("\":") || text.StartsWith("\": \""))
-            {
-                text = text.TrimStart(':', ' ', '"');
-            }
-            
-            return text.Trim();
         }
 
         /// <summary>
@@ -2398,7 +2411,7 @@ namespace ChillAIMod
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
                 UseLocalOllama = _useOllama.Value,
-                UseXnneHangLab = _useXnneHangLab.Value,
+                UseXnneHangLab = false,
                 UseXnneHangLabChatServer = useChatServer,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = _thinkModeConfig.Value,
@@ -2416,7 +2429,7 @@ namespace ChillAIMod
                 {
                     // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
                     string summary;
-                    if (requestContext.UseXnneHangLab || requestContext.UseXnneHangLabChatServer)
+                    if (requestContext.UseXnneHangLabChatServer)
                     {
                         summary = rawResponse;
                     }
