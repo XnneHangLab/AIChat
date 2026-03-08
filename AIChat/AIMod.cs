@@ -539,7 +539,7 @@ namespace ChillAIMod
                     GUILayout.Label($"  chat:      {GetChatUrl()}", endpointStyle);
                     GUILayout.Label($"  interrupt: {_xnneHangLabChatBaseUrl.Value.TrimEnd('/')}/memory/interrupt", endpointStyle);
                     GUILayout.Label($"  deeplx:    {GetDeepLXUrl()}", endpointStyle);
-                    GUILayout.Label($"  gsv:       {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", endpointStyle);
+                    GUILayout.Label($"  gsv:       {TTSClient.GetGptSovitsGenerateEndpoint(GetTtsBaseUrl())}", endpointStyle);
                     GUILayout.Label($"  qwen-tts:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", endpointStyle);
                     GUI.color = prevServerColor;
 
@@ -637,7 +637,7 @@ namespace ChillAIMod
                     ttsEndpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
                     Color prevTtsColor = GUI.color;
                     GUI.color = new Color(0.7f, 0.9f, 1f);
-                    GUILayout.Label($"  gsv:   {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
+                    GUILayout.Label($"  gsv:   {TTSClient.GetGptSovitsGenerateEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
                     GUILayout.Label($"  qwen:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
                     GUI.color = prevTtsColor;
                     GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
@@ -1278,7 +1278,7 @@ namespace ChillAIMod
                         else
                         {
                             yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                                TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl()),
+                                TTSClient.GetGptSovitsGenerateEndpoint(GetTtsBaseUrl()),
                                 voiceText,
                                 _targetLangConfig.Value,
                                 _refAudioPathConfig.Value,

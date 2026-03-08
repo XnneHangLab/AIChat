@@ -212,9 +212,22 @@ namespace AIChat.Services
             return Provider.GptSovits;
         }
 
-        public static string GetGptSovitsEndpoint(string baseUrl)
+        public static string NormalizeGptSovitsBase(string baseUrl)
         {
-            return baseUrl.TrimEnd('/') + "/tts/gptsovitsv2/tts";
+            string normalized = baseUrl.TrimEnd('/');
+            if (normalized.EndsWith("/tts/gptsovitsv2", StringComparison.OrdinalIgnoreCase))
+                return normalized;
+            return normalized + "/tts/gptsovitsv2";
+        }
+
+        public static string GetGptSovitsGenerateEndpoint(string baseUrl)
+        {
+            return NormalizeGptSovitsBase(baseUrl) + "/tts";
+        }
+
+        public static string GetGptSovitsHealthEndpoint(string baseUrl)
+        {
+            return NormalizeGptSovitsBase(baseUrl) + "/health";
         }
 
         public static string NormalizeQwenTtsBase(string baseUrl)
@@ -539,14 +552,10 @@ namespace AIChat.Services
 
                 string ttsUrl = provider == Provider.FasterQwenTts
                     ? GetQwenTtsHealthEndpoint(getBaseUrl())
-                    : GetGptSovitsEndpoint(getBaseUrl());
+                    : GetGptSovitsHealthEndpoint(getBaseUrl());
                 bool isReady = false;
 
-                string healthUrl = provider == Provider.GptSovits
-                    ? ttsUrl + "?text=test&text_lang=ja&ref_audio_path=elaina.wav&prompt_text=test&prompt_lang=ja&speed_factor=1.0"
-                    : ttsUrl;
-
-                using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
+                using (UnityWebRequest req = UnityWebRequest.Get(ttsUrl))
                 {
                     req.timeout = 5;
 
@@ -558,9 +567,7 @@ namespace AIChat.Services
                     }
                     else
                     {
-                        isReady = req.result == UnityWebRequest.Result.Success
-                            || req.responseCode == 422
-                            || req.responseCode == 400;
+                        isReady = req.result == UnityWebRequest.Result.Success && req.responseCode == 200;
                     }
                 }
 
