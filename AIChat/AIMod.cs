@@ -221,8 +221,8 @@ namespace ChillAIMod
             _useOllama = Config.Bind("7. Predict LLM", "Use_Ollama_API", false, "预测回复使用 Ollama API");
             _thinkModeConfig = Config.Bind("7. Predict LLM", "ThinkMode", ThinkMode.Default, "预测回复的深度思考模式 (Default/Enable/Disable)");
             _chatApiUrlConfig = Config.Bind("7. Predict LLM", "API_URL",
-                "http://127.0.0.1:12393/memory/chat",
-                "预测回复使用的 stateless LLM API URL");
+                "https://api.openai.com/v1/chat/completions",
+                "预测回复使用的 stateless LLM API URL（默认 OpenAI chat/completions 完整端点）");
             _apiKeyConfig = Config.Bind("7. Predict LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "预测回复使用的 API Key");
             _modelConfig = Config.Bind("7. Predict LLM", "ModelName", "openai/gpt-3.5-turbo", "预测回复使用的模型名称");
             _logApiRequestBodyConfig = Config.Bind("7. Predict LLM", "LogApiRequestBody", false,
@@ -568,12 +568,14 @@ namespace ChillAIMod
                     GUIStyle predictLlmInfoStyle = new GUIStyle(GUI.skin.label);
                     predictLlmInfoStyle.wordWrap = true;
                     GUILayout.Label("仅用于“预测回复”功能。主对话不会使用这里的 API URL / API Key / Model。", predictLlmInfoStyle);
+                    GUILayout.Label("这里走的是 stateless 的 OpenAI 兼容 chat/completions 接口。", predictLlmInfoStyle);
+                    GUILayout.Label("默认填写格式：`https://api.openai.com/v1/chat/completions`。一般请直接填完整端点，不要只填到 `/v1` 或域名根路径。", predictLlmInfoStyle);
 
                     bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "预测回复使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     _useOllama.Value = newUseOllama;
 
                     GUILayout.Space(5);
-                    GUILayout.Label("API URL：");
+                    GUILayout.Label("API URL（chat/completions 完整端点）：");
                     _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
 
                     GUILayout.Space(5);
