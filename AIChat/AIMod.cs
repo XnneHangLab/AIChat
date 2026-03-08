@@ -546,6 +546,7 @@ namespace ChillAIMod
                     GUIStyle serverInfoStyle = new GUIStyle(GUI.skin.label);
                     serverInfoStyle.wordWrap = true;
                     GUILayout.Label("主对话、TTS、翻译固定走 XnneHangLab Server。", serverInfoStyle);
+                    GUILayout.Label("长期记忆由后端托管，记忆数据存储在后端的 ./memory_bench 目录下。", serverInfoStyle);
                     GUILayout.Space(5);
                 }
 
