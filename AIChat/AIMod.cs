@@ -33,7 +33,6 @@ namespace ChillAIMod
         private ConfigEntry<string> _targetLangConfig;
         private ConfigEntry<bool> _useGptSovitsTtsConfig;
         private ConfigEntry<bool> _useFasterQwenTtsConfig;
-        private ConfigEntry<string> _personaConfig;
         private ConfigEntry<string> _chatApiUrlConfig;
 
         private ConfigEntry<bool> _audioPathCheckConfig;
@@ -45,10 +44,6 @@ namespace ChillAIMod
         // --- 新增音量配置 ---
         private ConfigEntry<float> _voiceVolumeConfig;
 
-        // --- 新增：实验性分层记忆系统 ---
-        private ConfigEntry<bool> _experimentalMemoryConfig;
-        private HierarchicalMemory _hierarchicalMemory;
-        
         // --- 新增：日志记录设置 ---
         private ConfigEntry<bool> _logApiRequestBodyConfig;
         private ConfigEntry<bool> _hideApiKeyInUiConfig;
@@ -68,7 +63,6 @@ namespace ChillAIMod
         // --- 新增：XnneHangLab Chat Server 独立配置 ---
         private ConfigEntry<bool> _useXnneHangLabChatServer;
         private ConfigEntry<string> _xnneHangLabChatBaseUrl;
-        private ConfigEntry<bool> _disablePersonaWhenUsingChatServer;
 
         // --- 新增：预测对话配置 ---
         private ConfigEntry<string> _predictAngelPromptConfig;
@@ -79,7 +73,6 @@ namespace ChillAIMod
         private bool _showLlmSettings = false;
         private bool _showTtsSettings = false;
         private bool _showInterfaceSettings = false;
-        private bool _showPersonaSettings = false;
         private bool _showXnneHangLabChatSettings = false;
         private bool _showPredictSettings = false;
 
@@ -213,7 +206,6 @@ namespace ChillAIMod
             Example 2: [Think] ||| うーん、ここの描写が難しいのよね… ||| 嗯……这里的描写好难写啊……
             Example 3: [Drink] ||| ふぅ…ちょっと休憩しない？画面越しだけど、乾杯。 ||| 呼……要不休息一下？虽然隔着屏幕，乾杯。
         ";
-        private Vector2 _personaScrollPosition = Vector2.zero;
         void Awake()
         {
             Log.Init(this.Logger);
@@ -269,11 +261,6 @@ namespace ChillAIMod
             // 窗口标题显示配置
             _showWindowTitle = Config.Bind("3. UI", "ShowWindowTitle", true, "显示窗口标题");
 
-            // --- 人设配置 ---
-            _experimentalMemoryConfig = Config.Bind("4. Persona", "ExperimentalMemory", false, 
-                "启用记忆");
-            _personaConfig = Config.Bind("4. Persona", "SystemPrompt", DefaultPersona, "System Prompt");
-
             // --- 翻译配置 ---
             _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
@@ -290,8 +277,6 @@ namespace ChillAIMod
             _xnneHangLabChatBaseUrl = Config.Bind("1. XnneHangLab Server", "Base_URL",
                 "http://127.0.0.1:12393",
                 "XnneHangLab Server 根地址（聊天、TTS、翻译端点都由此自动拼接）");
-            _disablePersonaWhenUsingChatServer = Config.Bind("1. XnneHangLab Server", "Disable_Persona_When_Using_Chat_Server", false,
-                "使用 XnneHangLab Chat Server 时禁用人设提示词（Chat Server 自行管理 System Prompt）");
             _useXnneHangLabChatServer.Value = true;
 
             // --- 新增：预测对话配置 ---
@@ -338,13 +323,6 @@ namespace ChillAIMod
             if (_deeplxHealthCheckCoroutine == null)
             {
                 _deeplxHealthCheckCoroutine = StartCoroutine(DeepLXHealthCheckLoop());
-            }
-
-            // 【初始化分层记忆系统】
-            if (_experimentalMemoryConfig.Value)
-            {
-                InitializeHierarchicalMemory();
-                Log.Info(">>> 实验性分层记忆系统已启用 <<<");
             }
 
             Log.Info($">>> AIMod V{AIChat.Version.VersionString}  已加载 <<<");
@@ -564,12 +542,6 @@ namespace ChillAIMod
                     GUILayout.Label($"  gsv:       {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", endpointStyle);
                     GUILayout.Label($"  qwen-tts:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", endpointStyle);
                     GUI.color = prevServerColor;
-
-                    GUILayout.Space(5);
-                    _disablePersonaWhenUsingChatServer.Value = GUILayout.Toggle(
-                        _disablePersonaWhenUsingChatServer.Value,
-                        "禁用人设提示词（建议勾选，由 Server 自行管理 System Prompt）",
-                        GUILayout.Height(elementHeight));
 
                     GUIStyle serverInfoStyle = new GUIStyle(GUI.skin.label);
                     serverInfoStyle.wordWrap = true;
@@ -806,45 +778,6 @@ namespace ChillAIMod
                 }
                 
                 GUILayout.EndVertical(); 
-                GUILayout.Space(5);
-
-                // --- 人设配置 Box ---
-                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
-                string personaBtnText = _showPersonaSettings ? "🔽 人设配置" : "▶️ 人设配置";
-                if (GUILayout.Button(personaBtnText, GUILayout.Height(elementHeight)))
-                {
-                    _showPersonaSettings = !_showPersonaSettings;
-                }
-                
-                if (_showPersonaSettings)
-                {
-                    GUILayout.Space(5);
-                    GUILayout.BeginHorizontal();
-                    _experimentalMemoryConfig.Value = GUILayout.Toggle(_experimentalMemoryConfig.Value, "启用记忆", GUILayout.Height(elementHeight));
-                    if (GUILayout.Button("🗑️ 清除所有记忆", GUILayout.Width(btnWidth*3)))
-                    {
-                        _hierarchicalMemory?.ClearAllMemory();
-                        Log.Info("记忆已清空");
-                    }
-                    GUILayout.EndHorizontal();
-                    GUILayout.Space(5);
-                    
-                    // 新增：禁用人设提示词开关
-                    _disablePersonaWhenUsingChatServer.Value = GUILayout.Toggle(
-                        _disablePersonaWhenUsingChatServer.Value,
-                        "禁用人设提示词（使用 XnneHangLab Chat Server 时建议勾选，由 Server 自行管理 System Prompt）",
-                        GUILayout.Height(elementHeight));
-                    
-                    GUILayout.Space(5);
-                    GUILayout.Label("人设（系统提示词）：");
-                    _personaScrollPosition = GUILayout.BeginScrollView(_personaScrollPosition, GUILayout.Height(elementHeight * 6));
-                    _personaConfig.Value = GUILayout.TextArea(_personaConfig.Value, GUILayout.ExpandHeight(true));
-                    GUILayout.EndScrollView();
-                    GUILayout.Space(5);
-                }
-                
-                GUILayout.EndVertical();
-
                 GUILayout.Space(5);
 
                 // ================= 预测对话配置区域 =================
@@ -1205,33 +1138,20 @@ namespace ChillAIMod
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
-            // 主对话固定走 XnneHangLab Server。
-            bool useChatServer = true;
-            
-            // 如果启用了 Chat Server 且勾选了禁用人设，则不发送 SystemPrompt
-            string systemPromptToSend = "";
-            if (useChatServer && _disablePersonaWhenUsingChatServer.Value)
-            {
-                systemPromptToSend = ""; // Chat Server 自行管理 System Prompt
-            }
-            else
-            {
-                systemPromptToSend = _personaConfig.Value;
-            }
-            
+            // 主对话固定走 XnneHangLab Server，不再发送客户端侧 SystemPrompt。
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
                 ApiKey = "",
                 ModelName = "",
-                SystemPrompt = systemPromptToSend,
+                SystemPrompt = "",
                 UserPrompt = prompt,
                 UseLocalOllama = false,
                 UseXnneHangLab = false,
                 UseXnneHangLabChatServer = true,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
                 ThinkMode = ThinkMode.Default,
-                HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
+                HierarchicalMemory = null,
                 LogHeader = "AIChat",
                 FixApiPathForThinkMode = false,
                 EnableTranslation = _enableTranslationConfig.Value,
@@ -1304,8 +1224,6 @@ namespace ChillAIMod
                 // 解析后立即剥离 [Emotion] ||| 前缀，防止解析异常时前缀混入 TTS/字幕
                 string voiceText = ResponseParser.StripEmotionPrefix(parsedResponse.VoiceText);
                 string subtitleText = ResponseParser.StripEmotionPrefix(parsedResponse.SubtitleText);
-                AddToMemorySystem("User", prompt);
-                AddToMemorySystem("AI", parsedResponse.Success ? $"[{emotionTag}] {voiceText}" : $"[格式错误] {fullResponse}");
 
                 // 仅在 voiceText 非空时请求 TTS，不再按日文内容做拦截
                 if (!string.IsNullOrEmpty(voiceText))
@@ -2437,13 +2355,6 @@ namespace ChillAIMod
         {
             Log.Info("[Chill AI Mod] 退出中...");
             
-            // 【保存记忆系统】
-            if (_hierarchicalMemory != null && _experimentalMemoryConfig.Value)
-            {
-                Log.Info("[HierarchicalMemory] 正在保存记忆...");
-                _hierarchicalMemory.SaveToFile();
-            }
-            
             Log.Info("[Chill AI Mod] 正在停止TTS轮询...");
             if (_ttsHealthCheckCoroutine != null)
             {
@@ -2933,106 +2844,6 @@ namespace ChillAIMod
             }
             sb.AppendLine();
             return sb.ToString();
-        }
-
-        // ================= 【分层记忆系统相关方法】 =================
-
-        /// <summary>
-        /// 初始化分层记忆系统
-        /// </summary>
-        private void InitializeHierarchicalMemory()
-        {
-            Func<string, Task<string>> llmSummarizer = async (prompt) => await CallLlmForSummaryAsync(prompt);
-            string memoryFilePath = Path.Combine(BepInEx.Paths.ConfigPath, "ChillAIMod", "memory.txt");
-
-            _hierarchicalMemory = new HierarchicalMemory(
-                llmSummarizer, 3, 10, 6, 5, memoryFilePath
-            );
-        }
-
-        /// <summary>
-        /// 调用 LLM 进行文本总结（将协程包装为 Task）
-        /// </summary>
-        private async Task<string> CallLlmForSummaryAsync(string prompt)
-        {
-            var tcs = new TaskCompletionSource<string>();
-
-            // 使用协程调用 LLM
-            StartCoroutine(CallLlmForSummaryCoroutine(prompt, (result) =>
-            {
-                tcs.SetResult(result);
-            }));
-
-            return await tcs.Task;
-        }
-
-        /// <summary>
-        /// 协程：调用 LLM 进行文本总结
-        /// </summary>
-        private IEnumerator CallLlmForSummaryCoroutine(string prompt, Action<string> onComplete)
-        {
-            Log.Info("[HierarchicalMemory] >>> 开始调用 LLM 进行总结...");
-
-            // 记忆总结固定走 XnneHangLab Server。
-            var requestContext = new LLMRequestContext
-            {
-                ApiUrl = GetChatUrl(),
-                ApiKey = "",
-                ModelName = "",
-                SystemPrompt = "你是一个专业的文本总结助手。",
-                UserPrompt = prompt,
-                UseLocalOllama = false,
-                UseXnneHangLab = false,
-                UseXnneHangLabChatServer = true,
-                LogApiRequestBody = _logApiRequestBodyConfig.Value,
-                ThinkMode = ThinkMode.Default,
-                HierarchicalMemory = null,
-                LogHeader = "HierarchicalMemory",
-                FixApiPathForThinkMode = false,
-                EnableTranslation = false, // 记忆总结不需要翻译
-                DeepLXUrl = GetDeepLXUrl(),
-                TranslateTargetLang = _translateTargetLangConfig.Value
-            };
-
-            yield return LLMClient.SendLLMRequest(
-                requestContext,
-                rawResponse => 
-                {
-                    // XnneHangLab /memory/chat 端点返回纯文本，不需要特殊解析
-                    string summary;
-                    if (requestContext.UseXnneHangLabChatServer)
-                    {
-                        summary = rawResponse;
-                    }
-                    else if (requestContext.UseLocalOllama)
-                    {
-                        summary = ResponseParser.ExtractContentFromOllama(rawResponse);
-                    }
-                    else
-                    {
-                        summary = ResponseParser.ExtractContentRegex(rawResponse);
-                    }
-                    onComplete?.Invoke(summary);
-                },
-                (errorMsg, responseCode) => 
-                {
-                    onComplete?.Invoke("[总结失败]");
-                }
-            );
-
-            Log.Info("[HierarchicalMemory] <<< 总结调用完成");
-        }
-
-        /// <summary>
-        /// 将对话添加到记忆系统中（如果启用）
-        /// 注意：已改为后台异步处理，不阻塞主流程
-        /// </summary>
-        private void AddToMemorySystem(string role, string content)
-        {
-            if (_hierarchicalMemory != null && _experimentalMemoryConfig.Value)
-            {
-                _hierarchicalMemory.AddMessage($"{role}: {content}");
-            }
         }
 
         /// <summary>
