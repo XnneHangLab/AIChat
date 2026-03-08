@@ -214,7 +214,7 @@ namespace AIChat.Services
 
         public static string GetGptSovitsEndpoint(string baseUrl)
         {
-            return baseUrl.TrimEnd('/') + "/tts";
+            return baseUrl.TrimEnd('/') + "/tts/gptsovitsv2/tts";
         }
 
         public static string NormalizeQwenTtsBase(string baseUrl)
@@ -286,25 +286,21 @@ namespace AIChat.Services
                 yield break;
             }
 
-            string jsonBody = "{ "
-                + "\"text\": \"" + ResponseParser.EscapeJson(textToSpeak) + "\", "
-                + "\"text_lang\": \"" + targetLang + "\", "
-                + "\"ref_audio_path\": \"" + ResponseParser.EscapeJson(refPath) + "\", "
-                + "\"prompt_text\": \"" + ResponseParser.EscapeJson(promptText) + "\", "
-                + "\"prompt_lang\": \"" + promptLang + "\" }";
+            string requestUrl = url
+                + "?text=" + UnityWebRequest.EscapeURL(textToSpeak ?? string.Empty)
+                + "&text_lang=" + UnityWebRequest.EscapeURL(targetLang ?? string.Empty)
+                + "&ref_audio_path=" + UnityWebRequest.EscapeURL(refPath ?? string.Empty)
+                + "&prompt_text=" + UnityWebRequest.EscapeURL(promptText ?? string.Empty)
+                + "&prompt_lang=" + UnityWebRequest.EscapeURL(promptLang ?? string.Empty)
+                + "&speed_factor=1.0";
 
             logger.LogInfo("[TTS] 完整请求信息:");
-            logger.LogInfo($"[TTS]   URL: {url}");
-            logger.LogInfo($"[TTS]   Request Body: {jsonBody}");
+            logger.LogInfo($"[TTS]   URL: {requestUrl}");
 
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+                using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(requestUrl, AudioType.WAV))
                 {
-                    byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
-                    request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-                    request.downloadHandler = new DownloadHandlerAudioClip(url, AudioType.WAV);
-                    request.SetRequestHeader("Content-Type", "application/json");
                     request.timeout = (int)timeoutSeconds;
 
                     var requestStartTime = DateTime.UtcNow;
@@ -540,15 +536,12 @@ namespace AIChat.Services
                     : GetGptSovitsEndpoint(getBaseUrl());
                 bool isReady = false;
 
-                using (UnityWebRequest req = provider == Provider.FasterQwenTts
-                    ? UnityWebRequest.Get(ttsUrl)
-                    : new UnityWebRequest(ttsUrl, "POST"))
+                string healthUrl = provider == Provider.GptSovits
+                    ? ttsUrl + "?text=test&text_lang=ja&ref_audio_path=elaina.wav&prompt_text=test&prompt_lang=ja&speed_factor=1.0"
+                    : ttsUrl;
+
+                using (UnityWebRequest req = UnityWebRequest.Get(healthUrl))
                 {
-                    if (provider == Provider.GptSovits)
-                    {
-                        req.uploadHandler = new UploadHandlerRaw(probeBody);
-                        req.SetRequestHeader("Content-Type", "application/json");
-                    }
                     req.timeout = 5;
 
                     yield return req.SendWebRequest();
