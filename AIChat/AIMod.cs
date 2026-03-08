@@ -225,23 +225,23 @@ namespace ChillAIMod
             // =================== 【配置绑定】 ===================
             // 按 UI 显示顺序组织，确保配置文件中的顺序与 UI 一致
             
-            // --- LLM 配置 ---
-            _useOllama = Config.Bind("1. LLM", "Use_Ollama_API", false, "使用 Ollama API");
-            _thinkModeConfig = Config.Bind("1. LLM", "ThinkMode", ThinkMode.Default, "深度思考模式 (Default/Enable/Disable)");
-            _chatApiUrlConfig = Config.Bind("1. LLM", "API_URL",
+            // --- 预测回复用的 stateless LLM 配置 ---
+            _useOllama = Config.Bind("7. Predict LLM", "Use_Ollama_API", false, "预测回复使用 Ollama API");
+            _thinkModeConfig = Config.Bind("7. Predict LLM", "ThinkMode", ThinkMode.Default, "预测回复的深度思考模式 (Default/Enable/Disable)");
+            _chatApiUrlConfig = Config.Bind("7. Predict LLM", "API_URL",
                 "http://127.0.0.1:12393/memory/chat",
-                "API URL");
-            _apiKeyConfig = Config.Bind("1. LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "API Key");
-            _modelConfig = Config.Bind("1. LLM", "ModelName", "openai/gpt-3.5-turbo", "模型名称");
-            _logApiRequestBodyConfig = Config.Bind("1. LLM", "LogApiRequestBody", false,
+                "预测回复使用的 stateless LLM API URL");
+            _apiKeyConfig = Config.Bind("7. Predict LLM", "API_Key", "sk-or-v1-PasteYourKeyHere", "预测回复使用的 API Key");
+            _modelConfig = Config.Bind("7. Predict LLM", "ModelName", "openai/gpt-3.5-turbo", "预测回复使用的模型名称");
+            _logApiRequestBodyConfig = Config.Bind("7. Predict LLM", "LogApiRequestBody", false,
                 "在日志中记录 API 请求体");
-            _hideApiKeyInUiConfig = Config.Bind("1. LLM", "HideApiKeyInUI", false,
-                "隐藏 API Key 输入框（录屏用）");
-            _fixApiPathForThinkModeConfig = Config.Bind("1. LLM", "FixApiPathForThinkMode", true,
-                "指定深度思考模式时尝试改用 Ollama 原生 API 路径");
+            _hideApiKeyInUiConfig = Config.Bind("7. Predict LLM", "HideApiKeyInUI", false,
+                "隐藏预测回复 API Key 输入框（录屏用）");
+            _fixApiPathForThinkModeConfig = Config.Bind("7. Predict LLM", "FixApiPathForThinkMode", true,
+                "预测回复指定深度思考模式时尝试改用 Ollama 原生 API 路径");
 
             // --- TTS 配置 ---
-            _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "TTS 服务 URL");
+            _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "兼容保留：主对话固定由 XnneHangLab Server 托管，此项仅保留旧配置兼容");
             _useGptSovitsTtsConfig = Config.Bind("2. TTS", "Use_GPT_SoVITS", true, "使用 GPT-SoVITS 作为 TTS 提供方");
             _useFasterQwenTtsConfig = Config.Bind("2. TTS", "Use_Faster_Qwen_TTS", false, "使用 faster-qwen-tts 作为 TTS 提供方");
             _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
@@ -278,20 +278,21 @@ namespace ChillAIMod
             _enableTranslationConfig = Config.Bind("5. Translation", "EnableTranslation", false,
                 "开启翻译（开启后请删掉系统提示词，无需利用提示词回复双语）");
             _deeplxUrlConfig = Config.Bind("5. Translation", "DeepLX_Url", "http://127.0.0.1:12393/translate/deeplx",
-                "DeepLX 翻译服务 URL（未启用 XnneHangLab Chat Server 时手动填写；启用后由 Server 地址自动拼接）");
+                "兼容保留：主对话固定由 XnneHangLab Server 托管，此项仅保留旧配置兼容");
             _translateSourceLangConfig = Config.Bind("5. Translation", "TranslateSourceLang", "ZH",
                 "翻译源语言（如 ZH=中文，JA=日文，EN=英文）");
             _translateTargetLangConfig = Config.Bind("5. Translation", "TranslateTargetLang", "JA",
                 "翻译目标语言（如 JA=日文，ZH=中文，EN=英文）");
 
             // --- 新增：XnneHangLab Chat Server 独立配置 ---
-            _useXnneHangLabChatServer = Config.Bind("6. XnneHangLab Chat", "Use_XnneHangLab_Chat_Server", false,
-                "启用 XnneHangLab Chat Server（启用后主对话接入 /memory/chat 端点，有记忆存储）");
-            _xnneHangLabChatBaseUrl = Config.Bind("6. XnneHangLab Chat", "Base_URL",
+            _useXnneHangLabChatServer = Config.Bind("1. XnneHangLab Server", "Use_XnneHangLab_Chat_Server", true,
+                "固定启用 XnneHangLab Server（客户端仅保留 Server 托管模式）");
+            _xnneHangLabChatBaseUrl = Config.Bind("1. XnneHangLab Server", "Base_URL",
                 "http://127.0.0.1:12393",
-                "XnneHangLab Server 根地址（端点由代码自动拼接为 {base}/memory/chat）");
-            _disablePersonaWhenUsingChatServer = Config.Bind("6. XnneHangLab Chat", "Disable_Persona_When_Using_Chat_Server", false,
+                "XnneHangLab Server 根地址（聊天、TTS、翻译端点都由此自动拼接）");
+            _disablePersonaWhenUsingChatServer = Config.Bind("1. XnneHangLab Server", "Disable_Persona_When_Using_Chat_Server", false,
                 "使用 XnneHangLab Chat Server 时禁用人设提示词（Chat Server 自行管理 System Prompt）");
+            _useXnneHangLabChatServer.Value = true;
 
             // --- 新增：预测对话配置 ---
             _predictAngelPromptConfig = Config.Bind("7. Predict", "Predict_Angel_Prompt",
@@ -539,33 +540,66 @@ namespace ChillAIMod
                 // 留出 50px 给滚动条和边框，防止爆边
                 float innerBoxWidth = _windowRect.width - 50f; 
 
-                // --- LLM 配置 Box ---
+                // --- XnneHangLab Server 配置 Box ---
                 GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
-                string llmBtnText = _showLlmSettings ? "🔽 LLM 配置" : "▶️ LLM 配置";
+                string xnneBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Server 设置" : "▶️ XnneHangLab Server 设置";
+                if (GUILayout.Button(xnneBtnText, GUILayout.Height(elementHeight)))
+                {
+                    _showXnneHangLabChatSettings = !_showXnneHangLabChatSettings;
+                }
+
+                if (_showXnneHangLabChatSettings)
+                {
+                    GUILayout.Space(5);
+                    GUILayout.Label("Server 根地址：");
+                    _xnneHangLabChatBaseUrl.Value = GUILayout.TextField(_xnneHangLabChatBaseUrl.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                    GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
+                    endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                    Color prevServerColor = GUI.color;
+                    GUI.color = new Color(0.7f, 0.9f, 1f);
+                    GUILayout.Label($"  chat:      {GetChatUrl()}", endpointStyle);
+                    GUILayout.Label($"  interrupt: {_xnneHangLabChatBaseUrl.Value.TrimEnd('/')}/memory/interrupt", endpointStyle);
+                    GUILayout.Label($"  deeplx:    {GetDeepLXUrl()}", endpointStyle);
+                    GUILayout.Label($"  gsv:       {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", endpointStyle);
+                    GUILayout.Label($"  qwen-tts:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", endpointStyle);
+                    GUI.color = prevServerColor;
+
+                    GUILayout.Space(5);
+                    _disablePersonaWhenUsingChatServer.Value = GUILayout.Toggle(
+                        _disablePersonaWhenUsingChatServer.Value,
+                        "禁用人设提示词（建议勾选，由 Server 自行管理 System Prompt）",
+                        GUILayout.Height(elementHeight));
+
+                    GUIStyle serverInfoStyle = new GUIStyle(GUI.skin.label);
+                    serverInfoStyle.wordWrap = true;
+                    GUILayout.Label("主对话、TTS、翻译固定走 XnneHangLab Server。", serverInfoStyle);
+                    GUILayout.Space(5);
+                }
+
+                GUILayout.EndVertical();
+
+                GUILayout.Space(5);
+
+                // --- 预测回复 LLM 配置 Box ---
+                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
+                string llmBtnText = _showLlmSettings ? "🔽 预测回复 LLM 配置" : "▶️ 预测回复 LLM 配置";
                 if (GUILayout.Button(llmBtnText, GUILayout.Height(elementHeight)))
                 {
                     _showLlmSettings = !_showLlmSettings;
                 }
-                
+
                 if (_showLlmSettings)
                 {
                     GUILayout.Space(5);
-                    
-                    // 【API 提供商选择】
-                    bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    _useOllama.Value = newUseOllama;
-                    
-                    // 【深度思考模式选项】
-                    GUILayout.Space(5);
-                    GUILayout.Label("指定深度思考（在请求体添加 think 键值对，目前仅 Ollama 支持）：");
-                    string[] thinkModeOptions = { "不指定", "启用", "禁用" };
-                    int currentMode = (int)_thinkModeConfig.Value;
-                    int newMode = GUILayout.SelectionGrid(currentMode, thinkModeOptions, 3, GUILayout.Height(elementHeight));
-                    if (newMode != currentMode)
-                    {
-                        _thinkModeConfig.Value = (ThinkMode)newMode;
-                    }
+                    GUIStyle predictLlmInfoStyle = new GUIStyle(GUI.skin.label);
+                    predictLlmInfoStyle.wordWrap = true;
+                    GUILayout.Label("仅用于“预测回复”功能。主对话不会使用这里的 API URL / API Key / Model。", predictLlmInfoStyle);
 
+                    bool newUseOllama = GUILayout.Toggle(_useOllama.Value, "预测回复使用 Ollama API", GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    _useOllama.Value = newUseOllama;
+
+                    GUILayout.Space(5);
                     GUILayout.Label("API URL：");
                     _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
 
@@ -574,26 +608,36 @@ namespace ChillAIMod
                         _hideApiKeyInUiConfig.Value,
                         "隐藏 API Key 输入框（录屏用）",
                         GUILayout.Height(elementHeight));
-                    
-                    if (!_useOllama.Value && !_hideApiKeyInUiConfig.Value) {
+
+                    if (!_useOllama.Value && !_hideApiKeyInUiConfig.Value)
+                    {
                         GUILayout.Label("API Key：");
                         _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
-                    
-                    // 模型名称：仅在非 Ollama 模式下显示
+
                     if (!_useOllama.Value)
                     {
                         GUILayout.Label("模型名称：");
                         _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     }
-                    
+
+                    GUILayout.Space(5);
+                    GUILayout.Label("指定深度思考（仅预测回复使用，当前主要给 Ollama）：");
+                    string[] thinkModeOptions = { "不指定", "启用", "禁用" };
+                    int currentMode = (int)_thinkModeConfig.Value;
+                    int newMode = GUILayout.SelectionGrid(currentMode, thinkModeOptions, 3, GUILayout.Height(elementHeight));
+                    if (newMode != currentMode)
+                    {
+                        _thinkModeConfig.Value = (ThinkMode)newMode;
+                    }
+
                     GUILayout.Space(5);
                     _logApiRequestBodyConfig.Value = GUILayout.Toggle(_logApiRequestBodyConfig.Value, "在日志中记录 API 请求体", GUILayout.Height(elementHeight));
                     GUILayout.Space(5);
                     _fixApiPathForThinkModeConfig.Value = GUILayout.Toggle(_fixApiPathForThinkModeConfig.Value, "指定深度思考模式时尝试改用 Ollama 原生 API 路径", GUILayout.Height(elementHeight));
                     GUILayout.Space(5);
                 }
-                
+
                 GUILayout.EndVertical();
 
                 GUILayout.Space(5);
@@ -605,12 +649,10 @@ namespace ChillAIMod
                 {
                     _showTtsSettings = !_showTtsSettings;
                 }
-                
+
                 if (_showTtsSettings)
                 {
                     GUILayout.Space(5);
-                    GUILayout.Label("TTS 基础 URL：");
-                    _sovitsUrlConfig.Value = GUILayout.TextField(_sovitsUrlConfig.Value);
 
                     bool useGptSovits = GUILayout.Toggle(_useGptSovitsTtsConfig.Value, "使用 gpt-sovits", GUILayout.Height(elementHeight));
                     bool useFasterQwenTts = GUILayout.Toggle(_useFasterQwenTtsConfig.Value, "使用 faster-qwen-tts", GUILayout.Height(elementHeight));
@@ -623,13 +665,9 @@ namespace ChillAIMod
                     GUILayout.Label($"  gsv:   {TTSClient.GetGptSovitsEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
                     GUILayout.Label($"  qwen:  {TTSClient.GetQwenTtsStreamEndpoint(GetTtsBaseUrl())}", ttsEndpointStyle);
                     GUI.color = prevTtsColor;
-
-                    if (_useXnneHangLabChatServer.Value)
-                    {
-                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                        infoStyle.wordWrap = true;
-                        GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管，基础 URL 会自动改用 Server 根地址。", infoStyle);
-                    }
+                    GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                    infoStyle.wordWrap = true;
+                    GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管。", infoStyle);
 
                     GUILayout.Label("GSV 访问音频文件的路径（可以是相对路径）：");
                     // 路径通常很长，必须加 MinWidth(50f)
@@ -807,75 +845,6 @@ namespace ChillAIMod
                 
                 GUILayout.EndVertical();
 
-                GUILayout.Space(10);
-
-                // ================= XnneHangLab Chat Server 配置区域 =================
-                GUILayout.BeginVertical("box", GUILayout.Width(innerBoxWidth));
-                string xnneChatBtnText = _showXnneHangLabChatSettings ? "🔽 XnneHangLab Chat Server 设置" : "▶️ XnneHangLab Chat Server 设置";
-                if (GUILayout.Button(xnneChatBtnText, GUILayout.Height(elementHeight)))
-                {
-                    _showXnneHangLabChatSettings = !_showXnneHangLabChatSettings;
-                }
-                
-                if (_showXnneHangLabChatSettings)
-                {
-                    GUILayout.Space(5);
-                    
-                    // 启用开关
-                    _useXnneHangLabChatServer.Value = GUILayout.Toggle(
-                        _useXnneHangLabChatServer.Value,
-                        "启用 XnneHangLab Chat Server",
-                        GUILayout.Height(elementHeight));
-                    
-                    GUILayout.Space(5);
-                    
-                    if (_useXnneHangLabChatServer.Value)
-                    {
-                        // Base URL 输入框
-                        GUILayout.Label("Server 根地址：");
-                        _xnneHangLabChatBaseUrl.Value = GUILayout.TextField(
-                            _xnneHangLabChatBaseUrl.Value,
-                            GUILayout.Height(elementHeight),
-                            GUILayout.MinWidth(50f));
-                        
-                        // 端点说明
-                        GUIStyle endpointStyle = new GUIStyle(GUI.skin.label);
-                        endpointStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
-                        Color prevC = GUI.color;
-                        GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label($"  chat:      {{base}}/memory/chat", endpointStyle);
-                        GUILayout.Label($"  interrupt: {{base}}/memory/interrupt", endpointStyle);
-                        GUILayout.Label($"  deeplx:    {{base}}/translate/deeplx", endpointStyle);
-                        GUILayout.Label($"  gsv:       {{base}}/tts/gptsovitsv2", endpointStyle);
-                        GUILayout.Label($"  qwen-tts:  {{base}}/tts/qwen-tts/generate/stream", endpointStyle);
-                        GUI.color = prevC;
-                        
-                        GUILayout.Space(5);
-                        
-                        // 提示信息
-                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                        infoStyle.wordWrap = true;
-                        GUI.color = new Color(0.8f, 1f, 0.8f);
-                        GUILayout.Label("✓ 启用后主对话将接入有记忆存储的 /memory/chat 端点", infoStyle);
-                        GUILayout.Label("✓ 建议在人设配置中勾选\"禁用人设提示词\"，由 Chat Server 自行管理 System Prompt", infoStyle);
-                        GUI.color = prevC;
-                    }
-                    else
-                    {
-                        // 未启用时的提示
-                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                        infoStyle.wordWrap = true;
-                        Color prevC = GUI.color;
-                        GUI.color = new Color(1f, 0.9f, 0.7f);
-                        GUILayout.Label("未启用。启用后可独立于 LLM 配置使用 XnneHangLab 的有记忆对话端点。", infoStyle);
-                        GUI.color = prevC;
-                    }
-                    
-                    GUILayout.Space(5);
-                }
-                
-                GUILayout.EndVertical();
-
                 GUILayout.Space(5);
 
                 // ================= 预测对话配置区域 =================
@@ -905,7 +874,7 @@ namespace ChillAIMod
                         infoStyle2.wordWrap = true;
                         Color prevC2 = GUI.color;
                         GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label("ℹ️ 预测功能复用 LLM 配置（API URL、API Key、Model Name）", infoStyle2);
+                        GUILayout.Label("ℹ️ 预测功能复用“预测回复 LLM 配置”（stateless）", infoStyle2);
                         GUILayout.Label("ℹ️ 触发时机：AI 完整回复后自动预测，TTS 播放完毕后显示预览", infoStyle2);
                         GUI.color = prevC2;
                     }
@@ -963,21 +932,12 @@ namespace ChillAIMod
 
                     GUILayout.Space(5);
 
-                    if (_useXnneHangLabChatServer.Value)
-                    {
-                        // XnneHangLab 模式：DeepLX 由 Server 托管，不需要手动填 URL
-                        GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
-                        infoStyle.wordWrap = true;
-                        Color prevC2 = GUI.color;
-                        GUI.color = new Color(0.7f, 0.9f, 1f);
-                        GUILayout.Label("DeepLX 已由 XnneHangLab Server 托管，无需单独填写 URL。", infoStyle);
-                        GUI.color = prevC2;
-                    }
-                    else
-                    {
-                        GUILayout.Label("DeepLX 服务 URL:");
-                        _deeplxUrlConfig.Value = GUILayout.TextField(_deeplxUrlConfig.Value, GUILayout.Height(elementHeight));
-                    }
+                    GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+                    infoStyle.wordWrap = true;
+                    Color prevC2 = GUI.color;
+                    GUI.color = new Color(0.7f, 0.9f, 1f);
+                    GUILayout.Label($"DeepLX 已由 XnneHangLab Server 托管：{GetDeepLXUrl()}", infoStyle);
+                    GUI.color = prevC2;
 
                     GUILayout.Space(5);
 
@@ -1245,8 +1205,8 @@ namespace ChillAIMod
             myText.text = "Thinking..."; myText.color = Color.yellow;
 
             // 2. 准备请求数据
-            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用，由后端管理所有模型和 API key
-            bool useChatServer = _useXnneHangLabChatServer.Value;
+            // 主对话固定走 XnneHangLab Server。
+            bool useChatServer = true;
             
             // 如果启用了 Chat Server 且勾选了禁用人设，则不发送 SystemPrompt
             string systemPromptToSend = "";
@@ -1262,18 +1222,18 @@ namespace ChillAIMod
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = useChatServer ? "" : _apiKeyConfig.Value, // Chat Server 不需要 API Key
-                ModelName = useChatServer ? "" : _modelConfig.Value, // Chat Server 不需要 Model Name
+                ApiKey = "",
+                ModelName = "",
                 SystemPrompt = systemPromptToSend,
                 UserPrompt = prompt,
-                UseLocalOllama = _useOllama.Value,
+                UseLocalOllama = false,
                 UseXnneHangLab = false,
-                UseXnneHangLabChatServer = useChatServer, // 新增字段
+                UseXnneHangLabChatServer = true,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
-                ThinkMode = _thinkModeConfig.Value,
+                ThinkMode = ThinkMode.Default,
                 HierarchicalMemory = _experimentalMemoryConfig.Value ? _hierarchicalMemory : null,
                 LogHeader = "AIChat",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                FixApiPathForThinkMode = false,
                 EnableTranslation = _enableTranslationConfig.Value,
                 DeepLXUrl = GetDeepLXUrl(),
                 TranslateTargetLang = _translateTargetLangConfig.Value
@@ -2509,16 +2469,12 @@ namespace ChillAIMod
         /// </summary>
         private string GetDeepLXUrl()
         {
-            if (_useXnneHangLabChatServer.Value)
-                return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/translate/deeplx";
-            return _deeplxUrlConfig.Value;
+            return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/translate/deeplx";
         }
 
         private string GetTtsBaseUrl()
         {
-            if (_useXnneHangLabChatServer.Value)
-                return _xnneHangLabChatBaseUrl.Value;
-            return _sovitsUrlConfig.Value;
+            return _xnneHangLabChatBaseUrl.Value;
         }
 
         private TTSClient.Provider GetCurrentTtsProvider()
@@ -2671,11 +2627,7 @@ namespace ChillAIMod
         /// </summary>
         private string GetChatUrl()
         {
-            // 新增：优先检查独立的 XnneHangLab Chat Server 配置
-            if (_useXnneHangLabChatServer.Value)
-                return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/memory/chat";
-            
-            return _chatApiUrlConfig.Value;
+            return _xnneHangLabChatBaseUrl.Value.TrimEnd('/') + "/memory/chat";
         }
 
         /// <summary>
@@ -2683,8 +2635,6 @@ namespace ChillAIMod
         /// </summary>
         IEnumerator PostInterruptSignal()
         {
-            if (!_useXnneHangLabChatServer.Value) yield break;
-
             string baseUrl = _xnneHangLabChatBaseUrl.Value;
             
             string url = baseUrl.TrimEnd('/') + "/memory/interrupt";
@@ -3023,24 +2973,22 @@ namespace ChillAIMod
         {
             Log.Info("[HierarchicalMemory] >>> 开始调用 LLM 进行总结...");
 
-            // 当启用 XnneHangLab Chat Server 时，LLM 配置不被使用
-            bool useChatServer = _useXnneHangLabChatServer.Value;
-            
+            // 记忆总结固定走 XnneHangLab Server。
             var requestContext = new LLMRequestContext
             {
                 ApiUrl = GetChatUrl(),
-                ApiKey = useChatServer ? "" : _apiKeyConfig.Value,
-                ModelName = useChatServer ? "" : _modelConfig.Value,
+                ApiKey = "",
+                ModelName = "",
                 SystemPrompt = "你是一个专业的文本总结助手。",
                 UserPrompt = prompt,
-                UseLocalOllama = _useOllama.Value,
+                UseLocalOllama = false,
                 UseXnneHangLab = false,
-                UseXnneHangLabChatServer = useChatServer,
+                UseXnneHangLabChatServer = true,
                 LogApiRequestBody = _logApiRequestBodyConfig.Value,
-                ThinkMode = _thinkModeConfig.Value,
+                ThinkMode = ThinkMode.Default,
                 HierarchicalMemory = null,
                 LogHeader = "HierarchicalMemory",
-                FixApiPathForThinkMode = _fixApiPathForThinkModeConfig.Value,
+                FixApiPathForThinkMode = false,
                 EnableTranslation = false, // 记忆总结不需要翻译
                 DeepLXUrl = GetDeepLXUrl(),
                 TranslateTargetLang = _translateTargetLangConfig.Value
