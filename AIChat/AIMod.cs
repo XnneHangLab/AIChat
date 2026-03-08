@@ -2411,6 +2411,8 @@ namespace ChillAIMod
 
         private void ApplyTtsProviderToggleState(bool useGptSovits, bool useFasterQwenTts)
         {
+            TTSClient.Provider previousProvider = GetCurrentTtsProvider();
+
             if (useGptSovits == useFasterQwenTts)
             {
                 if (useGptSovits && !_useGptSovitsTtsConfig.Value)
@@ -2426,6 +2428,13 @@ namespace ChillAIMod
 
             _useGptSovitsTtsConfig.Value = useGptSovits;
             _useFasterQwenTtsConfig.Value = useFasterQwenTts;
+
+            TTSClient.Provider currentProvider = GetCurrentTtsProvider();
+            if (currentProvider != previousProvider)
+            {
+                _isTTSServiceReady = false;
+                Log.Info($"[TTS Health] provider 已切换到 {currentProvider}，等待重新探测");
+            }
         }
 
         private void RegisterQwenStreamCancellation(CancellationTokenSource cancellation)

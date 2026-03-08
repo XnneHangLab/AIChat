@@ -523,14 +523,20 @@ namespace AIChat.Services
             ManualLogSource logger,
             Action<bool> onStateChanged)
         {
-            var waitShort = new WaitForSeconds(5f);
-            var waitLong = new WaitForSeconds(30f);
+            var waitStep = new WaitForSeconds(1f);
             bool lastState = false;
-            byte[] probeBody = Encoding.UTF8.GetBytes("{\"text\": \"test\"}");
+            Provider? lastProvider = null;
 
             while (true)
             {
                 Provider provider = getProvider();
+                if (lastProvider.HasValue && lastProvider.Value != provider)
+                {
+                    lastState = false;
+                    onStateChanged?.Invoke(false);
+                    logger.LogInfo($"[TTS Health] 切换 provider => {provider}，立即重新探测");
+                }
+
                 string ttsUrl = provider == Provider.FasterQwenTts
                     ? GetQwenTtsHealthEndpoint(getBaseUrl())
                     : GetGptSovitsEndpoint(getBaseUrl());
@@ -548,7 +554,7 @@ namespace AIChat.Services
 
                     if (provider == Provider.FasterQwenTts)
                     {
-                        isReady = req.result == UnityWebRequest.Result.Success;
+                        isReady = req.result == UnityWebRequest.Result.Success && req.responseCode == 200;
                     }
                     else
                     {
@@ -568,7 +574,15 @@ namespace AIChat.Services
                         logger.LogWarning($"[TTS Health] {provider} 服务断开");
                 }
 
-                yield return isReady ? waitLong : waitShort;
+                lastProvider = provider;
+
+                int waitSeconds = isReady ? 30 : 5;
+                for (int i = 0; i < waitSeconds; i++)
+                {
+                    if (getProvider() != provider)
+                        break;
+                    yield return waitStep;
+                }
             }
         }
     }
