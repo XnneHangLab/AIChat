@@ -244,7 +244,7 @@ namespace ChillAIMod
             _sovitsUrlConfig = Config.Bind("2. TTS", "TTS_Service_URL", "http://127.0.0.1:9880", "兼容保留：主对话固定由 XnneHangLab Server 托管，此项仅保留旧配置兼容");
             _useGptSovitsTtsConfig = Config.Bind("2. TTS", "Use_GPT_SoVITS", true, "使用 GPT-SoVITS 作为 TTS 提供方");
             _useFasterQwenTtsConfig = Config.Bind("2. TTS", "Use_Faster_Qwen_TTS", false, "使用 faster-qwen-tts 作为 TTS 提供方");
-            _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"Voice_MainScenario_27_016.wav", "GSV 访问音频文件的路径（可以是相对路径）");
+            _refAudioPathConfig = Config.Bind("2. TTS", "Audio_File_Path", @"elaina.wav", "参考音频地址（gsv 默认 elaina.wav，qwen-tts 用绝对路径）");
             _audioPathCheckConfig = Config.Bind("2. TTS", "AudioPathCheck", false, "从 Mod 侧检测音频文件路径");
             _promptTextConfig = Config.Bind("2. TTS", "Audio_File_Text", "君が集中した時のシータ波を検出して、リンクをつなぎ直せば元通りになるはず。", "音频文件台词");
             _promptLangConfig = Config.Bind("2. TTS", "PromptLang", "ja", "音频文件语言 (prompt_lang)");
@@ -669,7 +669,7 @@ namespace ChillAIMod
                     infoStyle.wordWrap = true;
                     GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管。", infoStyle);
 
-                    GUILayout.Label("GSV 访问音频文件的路径（可以是相对路径）：");
+                    GUILayout.Label("参考音频地址（gsv 默认 elaina.wav，qwen-tts 用绝对路径）：");
                     // 路径通常很长，必须加 MinWidth(50f)
                     _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
                     GUILayout.Space(5);
