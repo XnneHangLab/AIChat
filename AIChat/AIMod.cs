@@ -135,6 +135,8 @@ namespace ChillAIMod
         private bool _isAISpeaking = false;
         private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
+        private const string DefaultQwenRefText = "そうそう、この間気分転換に料理したんだ。テスト勉強のモチベを上げるためにも、自分の好物を作ることにしたんだ。あれこれ考え事しちゃって、お鍋吹きこぼれちゃったんだ。けどね、味はすごく美味しくできたよ。君がご近所さんだったら届けてあげたいくらい。この作業通話アプリがもっともっと進化したら。";
+        private const string DefaultQwenRefAudioPath = @"D:\tmp\XnneHangLab\examples\congyin.wav";
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
         private const float QwenStreamPlaybackLeadSeconds = 0.08f;
 
@@ -644,21 +646,33 @@ namespace ChillAIMod
                     infoStyle.wordWrap = true;
                     GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管。", infoStyle);
 
-                    GUILayout.Label("参考音频地址（gsv 默认 elaina.wav，qwen-tts 用绝对路径）：");
-                    // 路径通常很长，必须加 MinWidth(50f)
-                    _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    GUILayout.Space(5);
-                    _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
-                    GUILayout.Space(5);
-                    
                     if (GetCurrentTtsProvider() != TTSClient.Provider.GptSovits)
                     {
-                        GUILayout.Label("音频文件台词：");
+                        // 空时自动填默认值
+                        if (string.IsNullOrWhiteSpace(_promptTextConfig.Value))
+                            _promptTextConfig.Value = DefaultQwenRefText;
+                        if (string.IsNullOrWhiteSpace(_refAudioPathConfig.Value))
+                            _refAudioPathConfig.Value = DefaultQwenRefAudioPath;
+
+                        GUILayout.Label("参考文本（清空恢复默认值，可直接替换自定义）：");
                         _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(elementHeight * 3), GUILayout.MinWidth(50f));
                         
                         GUILayout.Space(5);
                         GUILayout.Label("音频文件语言 (prompt_lang):");
                         _promptLangConfig.Value = GUILayout.TextField(_promptLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                        GUILayout.Space(5);
+                        GUILayout.Label("参考音频路径（清空恢复默认值，可直接替换自定义）：");
+                        _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUILayout.Space(5);
+                        _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
+                    }
+                    else
+                    {
+                        GUILayout.Label("参考音频地址（gsv 默认 elaina.wav）：");
+                        _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUILayout.Space(5);
+                        _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
                     }
                     
                     GUILayout.Label("合成语音语言 (text_lang):");
