@@ -1471,13 +1471,42 @@ namespace ChillAIMod
                     translateTargetLang));
                 yield break;
             }
-            
-            // 2. 队列管理
-            Queue<AudioClip> audioQueue = new Queue<AudioClip>();
-            Queue<string> subtitleQueue = new Queue<string>();
-            Queue<string> emotionQueue = new Queue<string>();
-            
-            // 3. 启动后台 TTS+ 翻译生成协程
+
+            // GSV：完整 WAV 返回，异步生成队列 + 逐句等收到后直接播
+            yield return StartCoroutine(PlayGsvTTS(
+                sentences,
+                ttsBaseUrl,
+                targetLang,
+                refAudioPath,
+                promptText,
+                promptLang,
+                audioPathCheck,
+                myText,
+                enableTranslation,
+                deeplxUrl,
+                sourceLang,
+                translateTargetLang));
+        }
+
+        IEnumerator PlayGsvTTS(
+            List<StreamingSentenceTask> sentences,
+            string ttsBaseUrl,
+            string targetLang,
+            string refAudioPath,
+            string promptText,
+            string promptLang,
+            bool audioPathCheck,
+            UnityEngine.UI.Text myText,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang)
+        {
+            // 队列：后台异步生成，前台逐句等收到完整 WAV 后直接播
+            var audioQueue   = new Queue<AudioClip>();
+            var subtitleQueue = new Queue<string>();
+            var emotionQueue  = new Queue<string>();
+
             StartCoroutine(TTSWithTranslationGeneratorLoop(
                 sentences,
                 ttsBaseUrl,
@@ -1494,81 +1523,62 @@ namespace ChillAIMod
                 sourceLang,
                 translateTargetLang
             ));
-            
-            // 4. 播放循环
+
             string lastPlayedEmotion = null;
-            for (int sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
+            for (int i = 0; i < sentences.Count; i++)
             {
-                // 中断检查
                 if (_isInterrupted)
                 {
-                    Log.Info("[流式 TTS] 收到中断信号，停止播放");
-                    audioQueue.Clear();
-                    subtitleQueue.Clear();
-                    emotionQueue.Clear();
+                    audioQueue.Clear(); subtitleQueue.Clear(); emotionQueue.Clear();
                     break;
                 }
 
-                // 等待队列里有音频（等待期间也检查中断）
+                // 等待完整 WAV 入队（后台协程 TTS 完成后才 Enqueue）
                 while (audioQueue.Count == 0 || subtitleQueue.Count == 0 || emotionQueue.Count == 0)
                 {
                     if (_isInterrupted)
                     {
-                        Log.Info("[流式 TTS] 等待期间收到中断信号，停止播放");
-                        audioQueue.Clear();
-                        subtitleQueue.Clear();
-                        emotionQueue.Clear();
+                        audioQueue.Clear(); subtitleQueue.Clear(); emotionQueue.Clear();
                         yield break;
                     }
-                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Count})";
+                    myText.text = $"正在生成语音... ({i + 1}/{sentences.Count})";
                     BringOverlayToFront(myText);
                     yield return null;
                 }
-                
+
                 AudioClip clip = audioQueue.Dequeue();
-                string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
-                string sentenceEmotion = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : emotionTag;
-                if (string.IsNullOrWhiteSpace(sentenceEmotion)) sentenceEmotion = "Think";
-                bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
-                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
-                
+                string subtitle = subtitleQueue.Dequeue();
+                string emotion  = emotionQueue.Dequeue();
+                if (string.IsNullOrWhiteSpace(emotion)) emotion = "Think";
+
+                bool switchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
+                    || !string.Equals(lastPlayedEmotion, emotion, StringComparison.OrdinalIgnoreCase);
+
+                myText.text = subtitle;
+                BringOverlayToFront(myText);
+                myText.color = Color.white;
+
                 if (clip != null)
                 {
-                    if (!clip.LoadAudioData()) yield return null;
-                    yield return null;
-                    
-                    // 显示字幕（逐句）
-                    myText.text = subtitle;
-                    BringOverlayToFront(myText);
-                    myText.color = Color.white;
-                    
-                    if (shouldSwitchEmotion)
-                    {
-                        // emotion 变化时才切动作，避免同动作重复触发导致抽搐。
-                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
-                    }
+                    if (switchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(emotion, clip));
                     else
-                    {
-                        // emotion 不变：只播音频，不重复切动作。
                         yield return StartCoroutine(PlayAudioWithoutEmotionSwitch(clip));
-                    }
                 }
                 else
                 {
-                    Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
-                    myText.text = subtitle;
-                    BringOverlayToFront(myText);
-                    myText.color = Color.white;
-                    if (shouldSwitchEmotion)
-                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
+                    Log.Warning($"[GSV TTS] 第 {i + 1} 句生成失败，跳过");
+                    if (switchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(emotion, null));
                     else
                         yield return new WaitForSecondsRealtime(0.1f);
                 }
-                lastPlayedEmotion = sentenceEmotion;
+
+                lastPlayedEmotion = emotion;
             }
-            
+
             HandlePendingPredictResultAfterTTS();
-            Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
+            Log.Info(_isInterrupted ? "[GSV TTS] 已中断" : "[GSV TTS] 播放完成");
         }
 
         IEnumerator PlayStreamingQwenTTS(
