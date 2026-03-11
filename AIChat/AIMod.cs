@@ -1561,6 +1561,8 @@ namespace ChillAIMod
 
                 if (clip != null)
                 {
+                    if (!clip.LoadAudioData()) yield return null;
+                    yield return null;
                     if (switchEmotion)
                         yield return StartCoroutine(PlayNativeAnimation(emotion, clip));
                     else
