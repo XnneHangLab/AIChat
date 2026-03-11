@@ -137,6 +137,7 @@ namespace ChillAIMod
         private const float QwenStreamStartBufferSeconds = 2.5f;
         private const string DefaultQwenRefText = "そうそう、この間気分転換に料理したんだ。テスト勉強のモチベを上げるためにも、自分の好物を作ることにしたんだ。あれこれ考え事しちゃって、お鍋吹きこぼれちゃったんだ。けどね、味はすごく美味しくできたよ。君がご近所さんだったら届けてあげたいくらい。この作業通話アプリがもっともっと進化したら。";
         private const string DefaultQwenRefAudioPath = @"D:\tmp\XnneHangLab\examples\congyin.wav";
+        private const string DefaultGsvRefAudioPath = "elaina.wav"; // 后端路径：XnneHangLab/models/gptsovits/elaina/elaina.wav
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
         private const float QwenStreamPlaybackLeadSeconds = 0.08f;
 
@@ -669,8 +670,18 @@ namespace ChillAIMod
                     }
                     else
                     {
-                        GUILayout.Label("参考音频地址（gsv 默认 elaina.wav）：");
+                        // 空时自动填默认值
+                        if (string.IsNullOrWhiteSpace(_refAudioPathConfig.Value))
+                            _refAudioPathConfig.Value = DefaultGsvRefAudioPath;
+
+                        GUILayout.Label("参考音频路径（清空恢复默认值，可直接替换自定义）：");
                         _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUIStyle gsvHintStyle = new GUIStyle(GUI.skin.label);
+                        gsvHintStyle.wordWrap = true;
+                        gsvHintStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label("默认值位于后端 XnneHangLab/models/gptsovits/elaina/elaina.wav（暂不支持绝对路径）", gsvHintStyle);
+                        GUI.color = Color.white;
                         GUILayout.Space(5);
                         _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
                     }
