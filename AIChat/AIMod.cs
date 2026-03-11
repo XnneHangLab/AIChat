@@ -1502,8 +1502,9 @@ namespace ChillAIMod
             string sourceLang,
             string translateTargetLang)
         {
-            // 队列：后台异步生成，前台逐句等收到完整 WAV 后直接播
-            var audioQueue   = new Queue<AudioClip>();
+            // subtitle 在 TTS 前入队，audio 在 TTS 后入队
+            // 只等 audioQueue，subtitle 一定已经在队里
+            var audioQueue    = new Queue<AudioClip>();
             var subtitleQueue = new Queue<string>();
             var emotionQueue  = new Queue<string>();
 
@@ -1533,8 +1534,8 @@ namespace ChillAIMod
                     break;
                 }
 
-                // 等待完整 WAV 入队（后台协程 TTS 完成后才 Enqueue）
-                while (audioQueue.Count == 0 || subtitleQueue.Count == 0 || emotionQueue.Count == 0)
+                // 只等 audio，subtitle/emotion 在 TTS 请求前已入队，一定存在
+                while (audioQueue.Count == 0)
                 {
                     if (_isInterrupted)
                     {
@@ -1546,9 +1547,9 @@ namespace ChillAIMod
                     yield return null;
                 }
 
-                AudioClip clip = audioQueue.Dequeue();
-                string subtitle = subtitleQueue.Dequeue();
-                string emotion  = emotionQueue.Dequeue();
+                AudioClip clip    = audioQueue.Dequeue();
+                string subtitle   = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : "";
+                string emotion    = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : "Think";
                 if (string.IsNullOrWhiteSpace(emotion)) emotion = "Think";
 
                 bool switchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
