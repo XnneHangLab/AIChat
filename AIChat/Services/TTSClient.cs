@@ -303,8 +303,7 @@ namespace AIChat.Services
                 + "?text=" + UnityWebRequest.EscapeURL(textToSpeak ?? string.Empty)
                 + "&text_lang=" + UnityWebRequest.EscapeURL(targetLang ?? string.Empty)
                 + "&ref_audio_path=" + UnityWebRequest.EscapeURL(refPath ?? string.Empty)
-                + "&prompt_text=" + UnityWebRequest.EscapeURL(promptText ?? string.Empty)
-                + "&prompt_lang=" + UnityWebRequest.EscapeURL(promptLang ?? string.Empty)
+                + (string.IsNullOrEmpty(promptText) ? "" : "&prompt_text=" + UnityWebRequest.EscapeURL(promptText) + "&prompt_lang=" + UnityWebRequest.EscapeURL(promptLang ?? string.Empty))
                 + "&speed_factor=1.0";
 
             logger.LogInfo("[TTS] 完整请求信息:");

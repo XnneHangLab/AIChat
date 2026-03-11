@@ -651,12 +651,15 @@ namespace ChillAIMod
                     _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
                     GUILayout.Space(5);
                     
-                    GUILayout.Label("音频文件台词：");
-                    _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(elementHeight * 3), GUILayout.MinWidth(50f));
-                    
-                    GUILayout.Space(5);
-                    GUILayout.Label("音频文件语言 (prompt_lang):");
-                    _promptLangConfig.Value = GUILayout.TextField(_promptLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    if (GetCurrentTtsProvider() != TTSClient.Provider.GptSovits)
+                    {
+                        GUILayout.Label("音频文件台词：");
+                        _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(elementHeight * 3), GUILayout.MinWidth(50f));
+                        
+                        GUILayout.Space(5);
+                        GUILayout.Label("音频文件语言 (prompt_lang):");
+                        _promptLangConfig.Value = GUILayout.TextField(_promptLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    }
                     
                     GUILayout.Label("合成语音语言 (text_lang):");
                     _targetLangConfig.Value = GUILayout.TextField(_targetLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -1247,8 +1250,8 @@ namespace ChillAIMod
                             GetTtsBaseUrl(),
                             _targetLangConfig.Value,
                             _refAudioPathConfig.Value,
-                            _promptTextConfig.Value,
-                            _promptLangConfig.Value,
+                            GetCurrentTtsProvider() == TTSClient.Provider.GptSovits ? "" : _promptTextConfig.Value,
+                            GetCurrentTtsProvider() == TTSClient.Provider.GptSovits ? "" : _promptLangConfig.Value,
                             _audioPathCheckConfig.Value,
                             myText,
                             _enableTranslationConfig.Value,
@@ -1282,8 +1285,8 @@ namespace ChillAIMod
                                 voiceText,
                                 _targetLangConfig.Value,
                                 _refAudioPathConfig.Value,
-                                _promptTextConfig.Value,
-                                _promptLangConfig.Value,
+                                "",
+                                "",
                                 Logger,
                                 (clip) => downloadedClip = clip,
                                 3,
