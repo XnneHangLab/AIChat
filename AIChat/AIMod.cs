@@ -135,6 +135,9 @@ namespace ChillAIMod
         private bool _isAISpeaking = false;
         private readonly List<CancellationTokenSource> _activeQwenStreamCancellations = new List<CancellationTokenSource>();
         private const float QwenStreamStartBufferSeconds = 2.5f;
+        private const string DefaultQwenRefText = "そうそう、この間気分転換に料理したんだ。テスト勉強のモチベを上げるためにも、自分の好物を作ることにしたんだ。あれこれ考え事しちゃって、お鍋吹きこぼれちゃったんだ。けどね、味はすごく美味しくできたよ。君がご近所さんだったら届けてあげたいくらい。この作業通話アプリがもっともっと進化したら。";
+        private const string DefaultQwenRefAudioPath = @"D:\tmp\XnneHangLab\examples\congyin.wav";
+        private const string DefaultGsvRefAudioPath = "elaina.wav"; // 后端路径：XnneHangLab/models/gptsovits/elaina/elaina.wav
         private const float QwenStreamPlaybackTailSeconds = 0.20f;
         private const float QwenStreamPlaybackLeadSeconds = 0.08f;
 
@@ -644,19 +647,44 @@ namespace ChillAIMod
                     infoStyle.wordWrap = true;
                     GUILayout.Label("当前 TTS 已由 XnneHangLab Server 托管。", infoStyle);
 
-                    GUILayout.Label("参考音频地址（gsv 默认 elaina.wav，qwen-tts 用绝对路径）：");
-                    // 路径通常很长，必须加 MinWidth(50f)
-                    _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
-                    GUILayout.Space(5);
-                    _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
-                    GUILayout.Space(5);
-                    
-                    GUILayout.Label("音频文件台词：");
-                    _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(elementHeight * 3), GUILayout.MinWidth(50f));
-                    
-                    GUILayout.Space(5);
-                    GUILayout.Label("音频文件语言 (prompt_lang):");
-                    _promptLangConfig.Value = GUILayout.TextField(_promptLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                    if (GetCurrentTtsProvider() != TTSClient.Provider.GptSovits)
+                    {
+                        // 空时自动填默认值
+                        if (string.IsNullOrWhiteSpace(_promptTextConfig.Value))
+                            _promptTextConfig.Value = DefaultQwenRefText;
+                        if (string.IsNullOrWhiteSpace(_refAudioPathConfig.Value))
+                            _refAudioPathConfig.Value = DefaultQwenRefAudioPath;
+
+                        GUILayout.Label("参考文本（清空恢复默认值，可直接替换自定义）：");
+                        _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(elementHeight * 3), GUILayout.MinWidth(50f));
+                        
+                        GUILayout.Space(5);
+                        GUILayout.Label("音频文件语言 (prompt_lang):");
+                        _promptLangConfig.Value = GUILayout.TextField(_promptLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+
+                        GUILayout.Space(5);
+                        GUILayout.Label("参考音频路径（清空恢复默认值，可直接替换自定义）：");
+                        _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUILayout.Space(5);
+                        _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
+                    }
+                    else
+                    {
+                        // 空时自动填默认值
+                        if (string.IsNullOrWhiteSpace(_refAudioPathConfig.Value))
+                            _refAudioPathConfig.Value = DefaultGsvRefAudioPath;
+
+                        GUILayout.Label("参考音频路径（清空恢复默认值，可直接替换自定义）：");
+                        _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
+                        GUIStyle gsvHintStyle = new GUIStyle(GUI.skin.label);
+                        gsvHintStyle.wordWrap = true;
+                        gsvHintStyle.fontSize = Mathf.Max(10, GUI.skin.label.fontSize - 2);
+                        GUI.color = new Color(0.7f, 0.9f, 1f);
+                        GUILayout.Label("默认值位于后端 XnneHangLab/models/gptsovits/elaina/elaina.wav（暂不支持绝对路径）", gsvHintStyle);
+                        GUI.color = Color.white;
+                        GUILayout.Space(5);
+                        _audioPathCheckConfig.Value = GUILayout.Toggle(_audioPathCheckConfig.Value, "从 Mod 侧检测音频文件路径", GUILayout.Height(elementHeight));
+                    }
                     
                     GUILayout.Label("合成语音语言 (text_lang):");
                     _targetLangConfig.Value = GUILayout.TextField(_targetLangConfig.Value, GUILayout.Height(elementHeight), GUILayout.MinWidth(50f));
@@ -1247,8 +1275,8 @@ namespace ChillAIMod
                             GetTtsBaseUrl(),
                             _targetLangConfig.Value,
                             _refAudioPathConfig.Value,
-                            _promptTextConfig.Value,
-                            _promptLangConfig.Value,
+                            GetCurrentTtsProvider() == TTSClient.Provider.GptSovits ? "" : _promptTextConfig.Value,
+                            GetCurrentTtsProvider() == TTSClient.Provider.GptSovits ? "" : _promptLangConfig.Value,
                             _audioPathCheckConfig.Value,
                             myText,
                             _enableTranslationConfig.Value,
@@ -1282,8 +1310,8 @@ namespace ChillAIMod
                                 voiceText,
                                 _targetLangConfig.Value,
                                 _refAudioPathConfig.Value,
-                                _promptTextConfig.Value,
-                                _promptLangConfig.Value,
+                                "",
+                                "",
                                 Logger,
                                 (clip) => downloadedClip = clip,
                                 3,
@@ -1471,13 +1499,43 @@ namespace ChillAIMod
                     translateTargetLang));
                 yield break;
             }
-            
-            // 2. 队列管理
-            Queue<AudioClip> audioQueue = new Queue<AudioClip>();
-            Queue<string> subtitleQueue = new Queue<string>();
-            Queue<string> emotionQueue = new Queue<string>();
-            
-            // 3. 启动后台 TTS+ 翻译生成协程
+
+            // GSV：完整 WAV 返回，异步生成队列 + 逐句等收到后直接播
+            yield return StartCoroutine(PlayGsvTTS(
+                sentences,
+                ttsBaseUrl,
+                targetLang,
+                refAudioPath,
+                promptText,
+                promptLang,
+                audioPathCheck,
+                myText,
+                enableTranslation,
+                deeplxUrl,
+                sourceLang,
+                translateTargetLang));
+        }
+
+        IEnumerator PlayGsvTTS(
+            List<StreamingSentenceTask> sentences,
+            string ttsBaseUrl,
+            string targetLang,
+            string refAudioPath,
+            string promptText,
+            string promptLang,
+            bool audioPathCheck,
+            UnityEngine.UI.Text myText,
+            bool enableTranslation,
+            string deeplxUrl,
+            string sourceLang,
+            string translateTargetLang)
+        {
+            // subtitle 在 TTS 前入队，audio 在 TTS 后入队
+            // 只等 audioQueue，subtitle 一定已经在队里
+            var audioQueue    = new Queue<AudioClip>();
+            var subtitleQueue = new Queue<string>();
+            var emotionQueue  = new Queue<string>();
+
             StartCoroutine(TTSWithTranslationGeneratorLoop(
                 sentences,
                 ttsBaseUrl,
@@ -1494,81 +1552,64 @@ namespace ChillAIMod
                 sourceLang,
                 translateTargetLang
             ));
-            
-            // 4. 播放循环
+
             string lastPlayedEmotion = null;
-            for (int sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
+            for (int i = 0; i < sentences.Count; i++)
             {
-                // 中断检查
                 if (_isInterrupted)
                 {
-                    Log.Info("[流式 TTS] 收到中断信号，停止播放");
-                    audioQueue.Clear();
-                    subtitleQueue.Clear();
-                    emotionQueue.Clear();
+                    audioQueue.Clear(); subtitleQueue.Clear(); emotionQueue.Clear();
                     break;
                 }
 
-                // 等待队列里有音频（等待期间也检查中断）
-                while (audioQueue.Count == 0 || subtitleQueue.Count == 0 || emotionQueue.Count == 0)
+                // 只等 audio，subtitle/emotion 在 TTS 请求前已入队，一定存在
+                while (audioQueue.Count == 0)
                 {
                     if (_isInterrupted)
                     {
-                        Log.Info("[流式 TTS] 等待期间收到中断信号，停止播放");
-                        audioQueue.Clear();
-                        subtitleQueue.Clear();
-                        emotionQueue.Clear();
+                        audioQueue.Clear(); subtitleQueue.Clear(); emotionQueue.Clear();
                         yield break;
                     }
-                    myText.text = $"正在生成语音... ({sentenceIndex + 1}/{sentences.Count})";
+                    myText.text = $"正在生成语音... ({i + 1}/{sentences.Count})";
                     BringOverlayToFront(myText);
                     yield return null;
                 }
-                
-                AudioClip clip = audioQueue.Dequeue();
-                string subtitle = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : ResponseParser.InsertLineBreaks(fullSubtitleText, 25);
-                string sentenceEmotion = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : emotionTag;
-                if (string.IsNullOrWhiteSpace(sentenceEmotion)) sentenceEmotion = "Think";
-                bool shouldSwitchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
-                    || !string.Equals(lastPlayedEmotion, sentenceEmotion, StringComparison.OrdinalIgnoreCase);
-                
+
+                AudioClip clip    = audioQueue.Dequeue();
+                string subtitle   = subtitleQueue.Count > 0 ? subtitleQueue.Dequeue() : "";
+                string emotion    = emotionQueue.Count > 0 ? emotionQueue.Dequeue() : "Think";
+                if (string.IsNullOrWhiteSpace(emotion)) emotion = "Think";
+
+                bool switchEmotion = string.IsNullOrEmpty(lastPlayedEmotion)
+                    || !string.Equals(lastPlayedEmotion, emotion, StringComparison.OrdinalIgnoreCase);
+
+                myText.text = subtitle;
+                BringOverlayToFront(myText);
+                myText.color = Color.white;
+
                 if (clip != null)
                 {
                     if (!clip.LoadAudioData()) yield return null;
                     yield return null;
-                    
-                    // 显示字幕（逐句）
-                    myText.text = subtitle;
-                    BringOverlayToFront(myText);
-                    myText.color = Color.white;
-                    
-                    if (shouldSwitchEmotion)
-                    {
-                        // emotion 变化时才切动作，避免同动作重复触发导致抽搐。
-                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, clip));
-                    }
+                    if (switchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(emotion, clip));
                     else
-                    {
-                        // emotion 不变：只播音频，不重复切动作。
                         yield return StartCoroutine(PlayAudioWithoutEmotionSwitch(clip));
-                    }
                 }
                 else
                 {
-                    Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句生成失败，跳过");
-                    myText.text = subtitle;
-                    BringOverlayToFront(myText);
-                    myText.color = Color.white;
-                    if (shouldSwitchEmotion)
-                        yield return StartCoroutine(PlayNativeAnimation(sentenceEmotion, null));
+                    Log.Warning($"[GSV TTS] 第 {i + 1} 句生成失败，跳过");
+                    if (switchEmotion)
+                        yield return StartCoroutine(PlayNativeAnimation(emotion, null));
                     else
                         yield return new WaitForSecondsRealtime(0.1f);
                 }
-                lastPlayedEmotion = sentenceEmotion;
+
+                lastPlayedEmotion = emotion;
             }
-            
+
             HandlePendingPredictResultAfterTTS();
-            Log.Info(_isInterrupted ? "[流式 TTS] 已中断" : "[流式 TTS] 播放完成");
+            Log.Info(_isInterrupted ? "[GSV TTS] 已中断" : "[GSV TTS] 播放完成");
         }
 
         IEnumerator PlayStreamingQwenTTS(
@@ -2036,7 +2077,7 @@ namespace ChillAIMod
                 // 生成 TTS 语音（使用翻译后的日文，或原文兜底）
                 AudioClip clip = null;
                 yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                    ttsBaseUrl + "/tts",
+                    TTSClient.GetGptSovitsGenerateEndpoint(ttsBaseUrl),
                     ttsText,
                     targetLang,
                     refAudioPath,
