@@ -1293,9 +1293,8 @@ namespace ChillAIMod
 
                         if (downloadedClip != null)
                         {
-                            downloadedClip.LoadAudioData();
-                            while (downloadedClip.loadState == AudioDataLoadState.Loading)
-                                yield return null;
+                            if (!downloadedClip.LoadAudioData()) yield return null;
+                            yield return null;
 
                             // 【应用换行】在将字幕文本显示到 UI 之前，强制插入换行符
                             subtitleText = ResponseParser.InsertLineBreaks(subtitleText, 25);
@@ -1535,17 +1534,8 @@ namespace ChillAIMod
                 
                 if (clip != null)
                 {
-                    clip.LoadAudioData();
-                    while (clip.loadState == AudioDataLoadState.Loading)
-                        yield return null;
-                    if (clip.loadState != AudioDataLoadState.Loaded)
-                    {
-                        Log.Warning($"[流式 TTS] 第 {sentenceIndex + 1} 句 AudioClip 加载失败，跳过");
-                        subtitleQueue.Clear();
-                        audioQueue.Clear();
-                        emotionQueue.Clear();
-                        continue;
-                    }
+                    if (!clip.LoadAudioData()) yield return null;
+                    yield return null;
                     
                     // 显示字幕（逐句）
                     myText.text = subtitle;
