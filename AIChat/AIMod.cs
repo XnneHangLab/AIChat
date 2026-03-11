@@ -2036,7 +2036,7 @@ namespace ChillAIMod
                 // 生成 TTS 语音（使用翻译后的日文，或原文兜底）
                 AudioClip clip = null;
                 yield return StartCoroutine(TTSClient.DownloadVoiceWithRetry(
-                    ttsBaseUrl + "/tts",
+                    TTSClient.GetGptSovitsGenerateEndpoint(ttsBaseUrl),
                     ttsText,
                     targetLang,
                     refAudioPath,
